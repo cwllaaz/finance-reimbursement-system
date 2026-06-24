@@ -1,0 +1,16 @@
+[Unit]
+Description=Finance Reimbursement System Backend
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=finance
+Group=finance
+WorkingDirectory=/opt/finance-reimbursement-system/backend
+EnvironmentFile=/etc/finance-reimbursement-system/backend.env
+ExecStart=/usr/bin/java -jar /opt/finance-reimbursement-system/backend/backend.jar --spring.profiles.active=prod
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+# Dependencies
+**/node_modules/
+
+# Build output
+backend/target/
+frontend/dist/
+*.jar
+*.war
+*.class
+
+# Runtime files
+uploads/
+backend/uploads/
+logs/
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+*.env
+!*.env.example
+!frontend/.env.development
+!frontend/.env.production
+backend/src/main/resources/application-local.properties
+backend/src/main/resources/application-prod-local.properties
+
+# IDE and system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local generated documents and checks
+*.docx
+docx_render_check/
+
+# Backup and deployment packages
+*.zip
+*.7z
+*.rar
+*备份*/
+
+# Office temporary files
+~$*
