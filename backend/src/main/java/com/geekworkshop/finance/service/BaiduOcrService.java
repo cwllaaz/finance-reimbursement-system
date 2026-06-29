@@ -65,15 +65,17 @@ public class BaiduOcrService {
                 throw new BusinessException("baidu ocr failed: " + root.path("error_msg").asText());
             }
 
-            JsonNode words = root.path("words_result");
+            JsonNode words = unwrapWordsResult(root.path("words_result"));
             InvoiceOcrRequest parsed = new InvoiceOcrRequest();
-            parsed.setInvoiceCode(readText(words, List.of("InvoiceCode", "invoice_code", "发票代码")));
-            parsed.setInvoiceNumber(readText(words, List.of("InvoiceNum", "InvoiceNumber", "invoice_number", "发票号码")));
-            parsed.setInvoiceDate(parseDate(readText(words, List.of("InvoiceDate", "invoice_date", "开票日期"))));
-            parsed.setAmount(parseAmount(readText(words, List.of("AmountWithoutTax", "CommodityAmount", "PretaxAmount", "金额"))));
-            parsed.setTaxAmount(parseAmount(readText(words, List.of("CommodityTax", "TotalTax", "TaxAmount", "税额"))));
-            parsed.setSellerName(readText(words, List.of("SellerName", "seller_name", "销售方名称")));
-            parsed.setBuyerName(readText(words, List.of("PurchaserName", "BuyerName", "buyer_name", "购买方名称")));
+            parsed.setInvoiceCode(readText(words, List.of("InvoiceCode", "invoice_code")));
+            parsed.setInvoiceNumber(readText(words, List.of("InvoiceNum", "InvoiceNumber", "invoice_number")));
+            parsed.setInvoiceDate(parseDate(readText(words, List.of("InvoiceDate", "invoice_date"))));
+            parsed.setAmount(readInvoiceAmount(words));
+            parsed.setTaxAmount(parseAmount(readText(words, List.of(
+                    "TotalTax", "TaxAmount", "CommodityTax", "total_tax", "tax_amount"
+            ))));
+            parsed.setSellerName(readText(words, List.of("SellerName", "seller_name")));
+            parsed.setBuyerName(readText(words, List.of("PurchaserName", "BuyerName", "buyer_name")));
 
             return new RecognizedInvoice(parsed, response.body());
         } catch (IOException exception) {
@@ -108,35 +110,106 @@ public class BaiduOcrService {
         return cachedAccessToken;
     }
 
+    private JsonNode unwrapWordsResult(JsonNode wordsResult) {
+        JsonNode words = wordsResult;
+        if (words.isArray() && !words.isEmpty()) {
+            words = words.get(0);
+        }
+        if (words.isObject() && words.has("result")) {
+            words = words.path("result");
+        }
+        return words;
+    }
+
     private String readText(JsonNode words, List<String> names) {
         for (String name : names) {
             JsonNode node = words.path(name);
             if (!node.isMissingNode() && !node.isNull()) {
-                if (node.isObject() && node.has("word")) {
-                    return node.path("word").asText(null);
+                String value = extractText(node);
+                if (value != null && !value.isBlank()) {
+                    return value;
                 }
-                return node.asText(null);
             }
         }
         return null;
+    }
+
+    private String extractText(JsonNode node) {
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                String value = extractText(item);
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+            return null;
+        }
+        if (node.isObject()) {
+            if (node.has("word")) {
+                return node.path("word").asText(null);
+            }
+            if (node.has("words")) {
+                return node.path("words").asText(null);
+            }
+            if (node.has("value")) {
+                return node.path("value").asText(null);
+            }
+            return null;
+        }
+        return node.asText(null);
+    }
+
+    private BigDecimal readInvoiceAmount(JsonNode words) {
+        // AmountInFiguers is Baidu's documented spelling for the tax-inclusive total.
+        String total = readText(words, List.of(
+                "AmountInFiguers",
+                "AmountInFigures",
+                "TotalAmount",
+                "InvoiceAmount",
+                "total_amount",
+                "invoice_amount"
+        ));
+        BigDecimal parsedTotal = parseAmount(total);
+        if (parsedTotal != null) {
+            return parsedTotal;
+        }
+
+        // Older invoice variants may only expose the pre-tax amount.
+        return parseAmount(readText(words, List.of(
+                "AmountWithoutTax",
+                "PretaxAmount",
+                "CommodityAmount",
+                "amount_without_tax",
+                "pretax_amount"
+        )));
     }
 
     private BigDecimal parseAmount(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
-        String normalized = value.replace("¥", "").replace(",", "").trim();
-        if (normalized.isBlank()) {
+        String normalized = value
+                .replace(",", "")
+                .replaceAll("[^0-9.\\-]", "")
+                .trim();
+        if (normalized.isBlank() || normalized.equals("-") || normalized.equals(".")) {
             return null;
         }
-        return new BigDecimal(normalized);
+        try {
+            return new BigDecimal(normalized);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private LocalDate parseDate(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
-        String normalized = value.trim().replace("年", "-").replace("月", "-").replace("日", "");
+        String normalized = value.trim()
+                .replace("年", "-")
+                .replace("月", "-")
+                .replace("日", "");
         List<DateTimeFormatter> formatters = List.of(
                 DateTimeFormatter.ISO_LOCAL_DATE,
                 DateTimeFormatter.ofPattern("yyyyMMdd"),
