@@ -1,56 +1,115 @@
-# 财务报销与预算管理系统
+# 内部凭证财务系统
 
-这是一个使用 Vibe Coding 和 AI 辅助完成的大学生练习项目，主题为“财务报销与预算管理系统”。项目模拟企业内部报销流程，包含员工提交报销、部门负责人审批、财务审批、预算扣减、发票上传、OCR 识别、Excel 导出、用户管理和操作日志审计等功能。
+这是一个使用 Vibe Coding 和 AI 辅助完成的大学生实践项目。系统从基础财务报销作业逐步扩展为面向研究院内部凭证流转的综合管理系统，覆盖申请、审批、付款、财务复核、预算、资产、收入、台账和安全审计。
 
-## 功能概览
+## 当前完成度
 
-- 登录与角色权限：员工、部门负责人、财务、管理员四类角色。
-- 报销申请：新增、编辑、删除、查询、提交报销单。
-- 审批流程：部门审批、财务审批、审批意见记录、审批流程时间轴。
-- 预算管理：部门预算设置、预算使用统计、报销通过后扣减预算。
-- 首页仪表盘：报销总数、本月金额、待审批数量、状态统计、预算使用图表。
-- 发票附件：上传发票图片，查看报销详情。
-- OCR 识别：支持模拟 OCR，也预留百度 OCR API 配置。
-- OCR 金额校验：比较发票金额与报销金额，提示一致、不一致或未识别。
-- 用户管理：管理员新增、编辑、删除、启用、禁用用户。
-- 个人资料：用户修改姓名、手机号、邮箱和密码。
-- Excel 导出：财务和管理员导出全部报销申请数据。
-- 操作日志：记录登录、报销、审批、预算、OCR、导出、用户管理等关键操作。
+- 后端：Spring Boot，已通过 51 项自动化测试。
+- 前端：Vue 3 + Element Plus，生产构建通过。
+- 数据库：MySQL 8，提供完整初始化脚本并支持 JPA 自动兼容旧数据。
+- 部署：提供 Nginx、systemd 和生产环境变量模板。
+- 演示数据：报销、申购、劳务、借款均包含草稿、审批中、待后续处理和已完成示例。
+
+## 核心功能
+
+### 统一工作台
+
+- 我的申请：只显示当前用户创建的报销、申购、劳务和借款。
+- 我的待办：按照角色、当前审批节点和部门范围返回待处理事项。
+- 已办事项：根据真实审批、付款和复核记录生成。
+- 支持业务类型、状态和关键词筛选。
+
+### 业务模块
+
+- 报销管理：`BX + 日期 + 三位序号`，支持关联申购、分类附件、百度/模拟 OCR 和金额校验。
+- 申购管理：`CG + 日期 + 三位序号`，支持多条采购明细和大额会议材料。
+- 资产验收：办公室验收入库，生成 `ZC` 资产编号；使用人领用时生成 `LY` 领用编号。
+- 劳务酬金：`LW + 日期 + 三位序号`，支持多人领款、金额大写、敏感信息脱敏和 Excel 导出。
+- 暂借款/预付款：`YF + 日期 + 三位序号`，支持付款、冲账、部分冲账和逾期提醒。
+- 收入登记与总台账：汇总收入、报销、劳务、申购和借款数据，支持筛选与 Excel 导出。
+- 预算管理：财务复核通过后扣减预算，预算不足时阻止完成。
+- 操作日志：记录登录、申请、审批、付款、OCR、附件、预算、导出和用户管理等关键操作。
+
+### 报销审批流程
+
+```text
+申请人提交
+  -> 财务初审
+  -> 部门负责人审批
+  -> 执行院长审批
+  -> 出纳付款并上传银行回执
+  -> 财务复核
+  -> 完成并扣减预算
+```
+
+金额超过 5 万元的报销和申购必须提供大额说明及会议审议材料。
+
+## 角色权限
+
+| 账号 | 密码 | 角色 | 主要权限 |
+| --- | --- | --- | --- |
+| `employee` | `123456` | 员工 | 提交并查看个人申请 |
+| `manager` | `123456` | 部门负责人 | 查看本部门数据并处理部门审批 |
+| `finance` | `123456` | 财务 | 初审、复核、预算、收入、台账与导出 |
+| `office` | `123456` | 办公室 | 申购管理和资产验收入库 |
+| `executive` | `123456` | 执行院长 | 全院仪表盘与院长审批 |
+| `cashier` | `123456` | 出纳 | 付款任务和银行回执 |
+| `admin` | `123456` | 管理员 | 用户、全量业务数据和安全审计 |
+
+以上账号只用于课程演示。系统首次启动会自动创建账号，并将旧明文密码迁移为 BCrypt。
+
+## 安全机制
+
+- BCrypt 密码加密及旧密码自动迁移。
+- 登录 token 默认 120 分钟有效。
+- 退出登录或修改密码后旧 token 立即失效。
+- 附件不允许通过公开 `/uploads/**` 直接访问。
+- 附件下载需要登录，并复用对应业务单据的数据权限。
+- 上传文件限制 10MB，同时校验文件名、扩展名和 MIME。
+- 禁止可执行文件、危险路径和伪造类型文件。
+- 真实数据库密码和百度 OCR Key 不应提交到 GitHub。
 
 ## 技术栈
 
 - 前端：Vue 3、Vite、Element Plus、ECharts、Axios
-- 后端：Spring Boot、Spring Data JPA、MySQL、Apache POI
-- 部署：Ubuntu、Nginx、systemd、MySQL
+- 后端：Java 21、Spring Boot、Spring Data JPA、Apache POI
+- 数据库：MySQL 8
+- 测试：JUnit 6、Mockito、H2
+- 部署：Ubuntu、Nginx、systemd
 - 第三方能力：百度 OCR API（可选）
 
 ## 项目结构
 
 ```text
 finance-reimbursement-system
-├── backend        Spring Boot 后端
-├── frontend       Vue3 前端
-├── database       数据库脚本
-├── deploy         服务器部署配置模板
-├── scripts        打包脚本
-├── start-backend.ps1
-└── start-frontend.ps1
+├── backend                 Spring Boot 后端和测试
+├── frontend                Vue 3 前端
+├── database                数据库初始化脚本
+├── deploy                  Nginx、systemd、环境变量和部署说明
+├── scripts                 项目文档生成脚本
+├── start-backend.ps1       Windows 后端启动脚本
+└── start-frontend.ps1      Windows 前端启动脚本
 ```
 
-## 本地运行环境
+## 在新电脑上运行
 
-建议安装：
+### 1. 安装环境
 
+- Git
 - JDK 21
-- Node.js 20+
+- Node.js 20 或更高版本
 - MySQL 8
-- IntelliJ IDEA
-- VS Code
-- DBeaver 或其他数据库工具
 
-## 创建数据库
+### 2. 克隆项目
 
-先在 MySQL 中创建数据库：
+```powershell
+git clone https://github.com/cwllaaz/finance-reimbursement-system.git
+cd finance-reimbursement-system
+```
+
+### 3. 创建数据库
+
+登录 MySQL 后执行：
 
 ```sql
 CREATE DATABASE IF NOT EXISTS finance_reimbursement
@@ -58,102 +117,105 @@ CREATE DATABASE IF NOT EXISTS finance_reimbursement
   DEFAULT COLLATE utf8mb4_unicode_ci;
 ```
 
-也可以在项目根目录运行：
+也可以在 Windows PowerShell 运行：
 
 ```powershell
 .\database\create-database.ps1
 ```
 
-## 启动后端
+### 4. 启动后端
 
-在项目根目录运行：
+推荐在项目根目录运行：
 
 ```powershell
 .\start-backend.ps1
 ```
 
-脚本会要求输入本机 MySQL root 密码，并通过环境变量传给 Spring Boot。后端默认启动在：
-
-```text
-http://localhost:8080
-```
-
-健康检查接口：
+脚本会要求输入本机 MySQL root 密码。启动成功后访问：
 
 ```text
 http://localhost:8080/api/health
 ```
 
-## 启动前端
-
-在项目根目录运行：
+也可以手动运行：
 
 ```powershell
-.\start-frontend.ps1
+cd backend
+$env:MYSQL_ROOT_PASSWORD="你的 MySQL 密码"
+.\mvnw.cmd spring-boot:run
 ```
 
-前端默认启动在：
+### 5. 启动前端
+
+另开一个 PowerShell：
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+浏览器访问：
 
 ```text
 http://localhost:5173
 ```
 
-## 测试账号
+## 从零验证项目
 
-系统启动后会自动初始化演示账号：
+后端测试使用 H2 内存数据库，不要求本机 MySQL 正在运行：
 
-| 用户名 | 密码 | 角色 |
-| --- | --- | --- |
-| employee | 123456 | 员工 |
-| manager | 123456 | 部门负责人 |
-| finance | 123456 | 财务 |
-| admin | 123456 | 管理员 |
+```powershell
+cd backend
+.\mvnw.cmd clean test package
+```
 
-这些账号仅用于课程演示和本地开发。
+前端验证：
 
-## 百度 OCR 配置（可选）
+```powershell
+cd frontend
+npm ci
+npm run build
+```
 
-不配置百度 OCR 时，系统会使用模拟 OCR，方便演示完整流程。
+当前验证结果：
 
-如果需要接入真实百度 OCR，可以设置环境变量：
+```text
+Backend: 51 tests passed, BUILD SUCCESS
+Frontend: production build completed
+Frontend dependencies: npm audit found 0 vulnerabilities
+```
+
+前端构建可能显示第三方 `PURE` 注释和大 chunk 警告，不影响生成 `dist`。
+
+## 百度 OCR 配置
+
+不配置百度 OCR 时，系统使用模拟识别，仍能演示完整流程。使用真实 OCR 时，在启动后端前设置：
 
 ```powershell
 $env:BAIDU_OCR_API_KEY="你的 API Key"
 $env:BAIDU_OCR_SECRET_KEY="你的 Secret Key"
 ```
 
-服务器部署时请写入 `/etc/finance-reimbursement-system/backend.env`，不要把真实 Key 提交到 GitHub。
+不要将真实 Key 写入仓库。
 
 ## 生产部署
 
-`deploy` 目录中包含：
+`deploy` 目录包含：
 
-- `backend.env.example`：后端环境变量模板
-- `nginx/finance-reimbursement-system.conf`：Nginx 配置模板
-- `systemd/finance-backend.service`：后端 systemd 服务模板
-- `README-部署说明.md`：部署说明
+- `backend.env.example`
+- `nginx/finance-reimbursement-system.conf`
+- `systemd/finance-backend.service`
+- `README-部署说明.md`
 
-线上访问可以配置为：
+推荐访问路径：
 
 ```text
 http://服务器公网IP/finance/
 ```
 
-## GitHub 公开注意事项
+详细步骤请阅读 [部署说明](deploy/README-部署说明.md)。
 
-本仓库不应提交以下内容：
+## Vibe Coding 实践说明
 
-- `node_modules`
-- `backend/target`
-- `frontend/dist`
-- 上传的发票图片
-- 本地 `.env` 文件
-- 真实数据库密码
-- 真实百度 OCR API Key / Secret Key
-- 打包压缩包和备份文件
-
-这些内容已通过根目录 `.gitignore` 排除。
-
-## 项目说明
-
-本项目重点展示了如何借助 AI 和 Vibe Coding 完成一个较完整的业务系统：先用自然语言拆解需求，再逐步生成后端接口、前端页面、数据库表、部署配置和项目文档，最后通过本地测试和服务器部署验证完整流程。
+本项目采用小步迭代方式完成：先将老师意见拆成单一、可验证的提示词，再由 AI 协助修改数据库、后端、前端、权限、测试和文档。每次功能完成后运行测试和生产构建，并通过角色账号验证真实业务流程。
