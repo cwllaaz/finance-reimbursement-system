@@ -10,11 +10,23 @@ import java.time.LocalDateTime;
 public class ReimbursementResponse {
 
     private Long id;
+    private String approvalNumber;
     private String title;
     private String expenseType;
     private BigDecimal amount;
     private LocalDate expenseDate;
     private String description;
+    private String applicantPhone;
+    private String budgetNumber;
+    private String reimbursementReason;
+    private LocalDate paymentDate;
+    private String payeeName;
+    private String bankAccount;
+    private String bankName;
+    private BigDecimal paymentTotal;
+    private String paymentVoucherNumber;
+    private String relatedPurchaseNumber;
+    private String highValueExplanation;
     private ReimbursementStatus status;
     private Long applicantId;
     private String applicantName;
@@ -27,11 +39,23 @@ public class ReimbursementResponse {
     public static ReimbursementResponse fromEntity(Reimbursement reimbursement) {
         ReimbursementResponse response = new ReimbursementResponse();
         response.id = reimbursement.getId();
+        response.approvalNumber = reimbursement.getApprovalNumber();
         response.title = reimbursement.getTitle();
         response.expenseType = reimbursement.getExpenseType();
         response.amount = reimbursement.getAmount();
         response.expenseDate = reimbursement.getExpenseDate();
         response.description = reimbursement.getDescription();
+        response.applicantPhone = reimbursement.getApplicantPhone();
+        response.budgetNumber = reimbursement.getBudgetNumber();
+        response.reimbursementReason = reimbursement.getReimbursementReason();
+        response.paymentDate = reimbursement.getPaymentDate();
+        response.payeeName = reimbursement.getPayeeName();
+        response.bankAccount = reimbursement.getBankAccount();
+        response.bankName = reimbursement.getBankName();
+        response.paymentTotal = reimbursement.getPaymentTotal();
+        response.paymentVoucherNumber = reimbursement.getPaymentVoucherNumber();
+        response.relatedPurchaseNumber = reimbursement.getRelatedPurchaseNumber();
+        response.highValueExplanation = reimbursement.getHighValueExplanation();
         response.status = reimbursement.getStatus();
         response.submittedAt = reimbursement.getSubmittedAt();
         response.createdAt = reimbursement.getCreatedAt();
@@ -54,6 +78,10 @@ public class ReimbursementResponse {
         return id;
     }
 
+    public String getApprovalNumber() {
+        return approvalNumber;
+    }
+
     public String getTitle() {
         return title;
     }
@@ -72,6 +100,50 @@ public class ReimbursementResponse {
 
     public String getDescription() {
         return description;
+    }
+
+    public String getApplicantPhone() {
+        return applicantPhone;
+    }
+
+    public String getBudgetNumber() {
+        return budgetNumber;
+    }
+
+    public String getReimbursementReason() {
+        return reimbursementReason;
+    }
+
+    public LocalDate getPaymentDate() {
+        return paymentDate;
+    }
+
+    public String getPayeeName() {
+        return payeeName;
+    }
+
+    public String getBankAccount() {
+        return bankAccount;
+    }
+
+    public String getBankName() {
+        return bankName;
+    }
+
+    public BigDecimal getPaymentTotal() {
+        return paymentTotal;
+    }
+
+    public String getPaymentVoucherNumber() {
+        return paymentVoucherNumber;
+    }
+
+    public String getRelatedPurchaseNumber() {
+        return relatedPurchaseNumber;
+    }
+
+    public String getHighValueExplanation() {
+        return highValueExplanation;
     }
 
     public ReimbursementStatus getStatus() {

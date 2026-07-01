@@ -8,6 +8,7 @@ import com.geekworkshop.finance.dto.DashboardStatsResponse;
 import com.geekworkshop.finance.dto.InvoiceOcrRequest;
 import com.geekworkshop.finance.dto.InvoiceOcrResponse;
 import com.geekworkshop.finance.dto.OcrResponse;
+import com.geekworkshop.finance.dto.PaymentRequest;
 import com.geekworkshop.finance.dto.ReimbursementDetailResponse;
 import com.geekworkshop.finance.dto.ReimbursementRequest;
 import com.geekworkshop.finance.dto.ReimbursementResponse;
@@ -16,6 +17,7 @@ import com.geekworkshop.finance.entity.ApprovalAction;
 import com.geekworkshop.finance.entity.ApprovalRecord;
 import com.geekworkshop.finance.entity.AppUser;
 import com.geekworkshop.finance.entity.Attachment;
+import com.geekworkshop.finance.entity.AttachmentType;
 import com.geekworkshop.finance.entity.Budget;
 import com.geekworkshop.finance.entity.Department;
 import com.geekworkshop.finance.entity.InvoiceOcrResult;
@@ -24,6 +26,7 @@ import com.geekworkshop.finance.entity.Reimbursement;
 import com.geekworkshop.finance.entity.ReimbursementStatus;
 import com.geekworkshop.finance.entity.UserRole;
 import com.geekworkshop.finance.exception.BusinessException;
+import com.geekworkshop.finance.exception.ForbiddenException;
 import com.geekworkshop.finance.repository.ApprovalRecordRepository;
 import com.geekworkshop.finance.repository.AppUserRepository;
 import com.geekworkshop.finance.repository.AttachmentRepository;
@@ -54,6 +57,7 @@ import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +67,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class ReimbursementService {
+
+    private static final BigDecimal HIGH_VALUE_THRESHOLD = new BigDecimal("50000.00");
 
     private final ReimbursementRepository reimbursementRepository;
     private final AppUserRepository appUserRepository;
@@ -101,6 +107,9 @@ public class ReimbursementService {
 
     @Transactional(readOnly = true)
     public List<ReimbursementResponse> list(AppUser currentUser, String keyword, ReimbursementStatus status) {
+        if (!canAccessReimbursements(currentUser)) {
+            throw new ForbiddenException("no permission to access reimbursements");
+        }
         String normalizedKeyword = StringUtils.hasText(keyword) ? keyword.trim() : null;
         return reimbursementRepository.search(normalizedKeyword, status)
                 .stream()
@@ -111,10 +120,31 @@ public class ReimbursementService {
 
     @Transactional(readOnly = true)
     public List<ReimbursementResponse> pending(AppUser currentUser, String keyword) {
+        if (currentUser.getRole() != UserRole.DEPARTMENT_MANAGER
+                && currentUser.getRole() != UserRole.FINANCE
+                && currentUser.getRole() != UserRole.EXECUTIVE
+                && currentUser.getRole() != UserRole.ADMIN) {
+            throw new ForbiddenException("no permission to access approval tasks");
+        }
         String normalizedKeyword = StringUtils.hasText(keyword) ? keyword.trim() : null;
         return reimbursementRepository.search(normalizedKeyword, null)
                 .stream()
                 .filter(item -> isPendingForUser(currentUser, item))
+                .map(ReimbursementResponse::fromEntity)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ReimbursementResponse> paymentTasks(AppUser currentUser) {
+        if (currentUser.getRole() != UserRole.CASHIER
+                && currentUser.getRole() != UserRole.FINANCE
+                && currentUser.getRole() != UserRole.ADMIN) {
+            throw new ForbiddenException("no permission to access payment tasks");
+        }
+
+        return reimbursementRepository.search(null, null)
+                .stream()
+                .filter(item -> item.getStatus() == ReimbursementStatus.EXECUTIVE_APPROVED)
                 .map(ReimbursementResponse::fromEntity)
                 .toList();
     }
@@ -193,6 +223,7 @@ public class ReimbursementService {
     @Transactional
     public ReimbursementResponse create(AppUser currentUser, ReimbursementRequest request) {
         Reimbursement reimbursement = new Reimbursement();
+        reimbursement.setApprovalNumber(generateApprovalNumber());
         fillEntity(reimbursement, request, currentUser);
         reimbursement.setStatus(ReimbursementStatus.DRAFT);
         reimbursement.setSubmittedAt(null);
@@ -234,6 +265,7 @@ public class ReimbursementService {
         if (reimbursement.getStatus() != ReimbursementStatus.DRAFT) {
             throw new BusinessException("only draft reimbursements can be submitted");
         }
+        validateSubmissionMaterials(reimbursement);
 
         reimbursement.setStatus(ReimbursementStatus.SUBMITTED);
         reimbursement.setSubmittedAt(LocalDateTime.now());
@@ -246,15 +278,55 @@ public class ReimbursementService {
     public ReimbursementResponse approve(AppUser currentUser, Long id, ApprovalRequest request) {
         Reimbursement reimbursement = findDetail(id);
 
+        requireRejectionReason(request);
+
+        if (currentUser.getRole() == UserRole.FINANCE) {
+            return handleFinanceApproval(currentUser, reimbursement, request);
+        }
         if (currentUser.getRole() == UserRole.DEPARTMENT_MANAGER) {
             return handleDepartmentApproval(currentUser, reimbursement, request);
         }
-
-        if (currentUser.getRole() == UserRole.FINANCE || currentUser.getRole() == UserRole.ADMIN) {
-            return handleFinanceApproval(currentUser, reimbursement, request);
+        if (currentUser.getRole() == UserRole.EXECUTIVE) {
+            return handleExecutiveApproval(currentUser, reimbursement, request);
+        }
+        if (currentUser.getRole() == UserRole.ADMIN) {
+            return switch (reimbursement.getStatus()) {
+                case SUBMITTED -> handleFinanceApproval(currentUser, reimbursement, request);
+                case FINANCE_INITIAL_APPROVED -> handleDepartmentApproval(currentUser, reimbursement, request);
+                case DEPARTMENT_APPROVED -> handleExecutiveApproval(currentUser, reimbursement, request);
+                case PAID -> handleFinanceApproval(currentUser, reimbursement, request);
+                default -> throw new BusinessException("current reimbursement has no pending approval");
+            };
         }
 
         throw new BusinessException("no permission to approve reimbursements");
+    }
+
+    @Transactional
+    public ReimbursementResponse confirmPayment(AppUser currentUser, Long id, PaymentRequest request) {
+        Reimbursement reimbursement = findDetail(id);
+        if (currentUser.getRole() != UserRole.CASHIER && currentUser.getRole() != UserRole.ADMIN) {
+            throw new ForbiddenException("only cashier can confirm payment");
+        }
+        if (reimbursement.getStatus() != ReimbursementStatus.EXECUTIVE_APPROVED) {
+            throw new BusinessException("payment is only allowed after executive approval");
+        }
+        if (!attachmentRepository.existsByReimbursementIdAndAttachmentType(id, AttachmentType.BANK_RECEIPT)) {
+            throw new BusinessException("bank receipt attachment is required before confirming payment");
+        }
+
+        reimbursement.setPaymentDate(request.getPaymentDate());
+        reimbursement.setPaymentTotal(request.getPaymentAmount());
+        reimbursement.setPaymentVoucherNumber(request.getVoucherNumber().trim());
+        reimbursement.setStatus(ReimbursementStatus.PAID);
+        saveApprovalRecord(reimbursement, currentUser, "CASHIER_PAYMENT", ApprovalAction.APPROVE, request.getComment());
+        Reimbursement saved = reimbursementRepository.save(reimbursement);
+        operationLogService.record(
+                currentUser, "付款管理", "出纳付款", saved.getId(), saved.getTitle(),
+                "付款日期：" + request.getPaymentDate() + "，金额：" + request.getPaymentAmount()
+                        + "，凭证号：" + request.getVoucherNumber().trim()
+        );
+        return ReimbursementResponse.fromEntity(saved);
     }
 
     @Transactional(readOnly = true)
@@ -301,51 +373,67 @@ public class ReimbursementService {
         assertCanView(currentUser, reimbursement);
 
         List<ApprovalRecord> records = approvalRecordRepository.findDetailByReimbursementIdOrderByCreatedAtAsc(id);
-        ApprovalRecord departmentRecord = latestRecord(records, "DEPARTMENT");
-        ApprovalRecord financeRecord = latestRecord(records, "FINANCE");
+        ApprovalRecord financeInitial = latestRecord(records, "FINANCE_INITIAL");
+        ApprovalRecord department = latestRecord(records, "DEPARTMENT");
+        ApprovalRecord executive = latestRecord(records, "EXECUTIVE");
+        ApprovalRecord payment = latestRecord(records, "CASHIER_PAYMENT");
+        ApprovalRecord financeRecheck = latestRecord(records, "FINANCE_RECHECK");
 
         return List.of(
                 creationNode(reimbursement),
                 submitNode(reimbursement),
-                departmentApprovalNode(reimbursement, departmentRecord),
-                financeApprovalNode(reimbursement, financeRecord),
-                finalResultNode(reimbursement, departmentRecord, financeRecord)
+                processNode("财务初审", "FINANCE_INITIAL", ReimbursementStatus.SUBMITTED, financeInitial, reimbursement),
+                processNode("部门负责人审批", "DEPARTMENT", ReimbursementStatus.FINANCE_INITIAL_APPROVED, department, reimbursement),
+                processNode("执行院长审批", "EXECUTIVE", ReimbursementStatus.DEPARTMENT_APPROVED, executive, reimbursement),
+                processNode("出纳付款并上传银行回执", "CASHIER_PAYMENT", ReimbursementStatus.EXECUTIVE_APPROVED, payment, reimbursement),
+                processNode("财务复核", "FINANCE_RECHECK", ReimbursementStatus.PAID, financeRecheck, reimbursement),
+                researchInstituteFinalNode(reimbursement, financeRecheck)
         );
     }
 
     @Transactional
-    public AttachmentResponse uploadAttachment(AppUser currentUser, Long id, MultipartFile file) {
+    public AttachmentResponse uploadAttachment(
+            AppUser currentUser,
+            Long id,
+            AttachmentType attachmentType,
+            MultipartFile file
+    ) {
         Reimbursement reimbursement = findDetail(id);
-        assertCanManage(currentUser, reimbursement);
-
-        if (file.isEmpty()) {
-            throw new BusinessException("uploaded file is empty");
+        boolean cashierReceiptUpload = currentUser.getRole() == UserRole.CASHIER
+                && attachmentType == AttachmentType.BANK_RECEIPT
+                && reimbursement.getStatus() == ReimbursementStatus.EXECUTIVE_APPROVED;
+        if (!cashierReceiptUpload) {
+            assertCanManage(currentUser, reimbursement);
         }
 
-        try {
-            Path invoiceUploadDir = Paths.get(uploadDir, "invoices").toAbsolutePath().normalize();
-            Files.createDirectories(invoiceUploadDir);
+        String originalName = SecureFileSupport.validate(file);
 
-            String originalName = file.getOriginalFilename() == null ? "invoice" : file.getOriginalFilename();
-            String safeName = originalName.replaceAll("[^a-zA-Z0-9._-]", "_");
+        try {
+            AttachmentType resolvedType = attachmentType == null ? AttachmentType.OTHER : attachmentType;
+            String typeDirectory = resolvedType.name().toLowerCase();
+            Path attachmentUploadDir = Paths.get(uploadDir, typeDirectory).toAbsolutePath().normalize();
+            Files.createDirectories(attachmentUploadDir);
+
+            String safeName = originalName.replaceAll("[^a-zA-Z0-9._\\-\\u4e00-\\u9fa5]", "_");
             String storedName = UUID.randomUUID() + "-" + safeName;
-            Path target = invoiceUploadDir.resolve(storedName);
+            Path target = attachmentUploadDir.resolve(storedName);
             file.transferTo(target);
 
             Attachment attachment = new Attachment();
             attachment.setReimbursement(reimbursement);
             attachment.setFileName(originalName);
-            attachment.setFileUrl("/uploads/invoices/" + storedName);
+            attachment.setFileUrl("/uploads/" + typeDirectory + "/" + storedName);
             attachment.setFileType(file.getContentType());
             attachment.setFileSize(file.getSize());
+            attachment.setAttachmentType(resolvedType);
             Attachment saved = attachmentRepository.save(attachment);
             operationLogService.record(
                     currentUser,
                     "附件管理",
-                    "上传发票附件",
+                    resolvedType == AttachmentType.INVOICE ? "上传发票附件" : "上传附件",
                     reimbursement.getId(),
                     reimbursement.getTitle(),
-                    "上传文件：" + originalName
+                    "附件类型：" + resolvedType.name() + "，上传文件：" + originalName
             );
             return AttachmentResponse.fromEntity(saved);
         } catch (IOException exception) {
@@ -385,9 +473,14 @@ public class ReimbursementService {
         Reimbursement reimbursement = findDetail(id);
         assertCanManage(currentUser, reimbursement);
 
-        Attachment attachment = attachmentRepository.findByReimbursementIdOrderByCreatedAtDesc(id)
+        Attachment attachment = attachmentRepository
+                .findByReimbursementIdAndAttachmentTypeOrderByCreatedAtDesc(id, AttachmentType.INVOICE)
                 .stream()
                 .findFirst()
+                .or(() -> attachmentRepository.findByReimbursementIdOrderByCreatedAtDesc(id)
+                        .stream()
+                        .filter(item -> item.getAttachmentType() == null)
+                        .findFirst())
                 .orElseThrow(() -> new BusinessException("please upload invoice attachment first"));
 
         InvoiceOcrResult result = invoiceOcrResultRepository.findByReimbursementId(id)
@@ -476,6 +569,13 @@ public class ReimbursementService {
 
     @Transactional(readOnly = true)
     public DashboardStatsResponse dashboardStats(AppUser currentUser) {
+        if (currentUser.getRole() != UserRole.DEPARTMENT_MANAGER
+                && currentUser.getRole() != UserRole.FINANCE
+                && currentUser.getRole() != UserRole.EXECUTIVE
+                && currentUser.getRole() != UserRole.ADMIN) {
+            throw new ForbiddenException("no permission to access financial dashboard");
+        }
+
         List<Reimbursement> visible = reimbursementRepository.search(null, null)
                 .stream()
                 .filter(item -> canView(currentUser, item))
@@ -489,7 +589,9 @@ public class ReimbursementService {
 
         long pendingCount = visible.stream()
                 .filter(item -> item.getStatus() == ReimbursementStatus.SUBMITTED
-                        || item.getStatus() == ReimbursementStatus.DEPARTMENT_APPROVED)
+                        || item.getStatus() == ReimbursementStatus.FINANCE_INITIAL_APPROVED
+                        || item.getStatus() == ReimbursementStatus.DEPARTMENT_APPROVED
+                        || item.getStatus() == ReimbursementStatus.PAID)
                 .count();
 
         Map<String, Long> statusCounts = visible.stream()
@@ -520,6 +622,18 @@ public class ReimbursementService {
         reimbursement.setAmount(request.getAmount());
         reimbursement.setExpenseDate(request.getExpenseDate());
         reimbursement.setDescription(StringUtils.hasText(request.getDescription()) ? request.getDescription().trim() : null);
+        reimbursement.setApplicantPhone(StringUtils.hasText(request.getApplicantPhone())
+                ? request.getApplicantPhone().trim()
+                : currentUser.getPhone());
+        reimbursement.setBudgetNumber(trimToNull(request.getBudgetNumber()));
+        reimbursement.setReimbursementReason(trimToNull(request.getReimbursementReason()));
+        reimbursement.setPaymentDate(request.getPaymentDate());
+        reimbursement.setPayeeName(trimToNull(request.getPayeeName()));
+        reimbursement.setBankAccount(trimToNull(request.getBankAccount()));
+        reimbursement.setBankName(trimToNull(request.getBankName()));
+        reimbursement.setPaymentTotal(request.getPaymentTotal() == null ? request.getAmount() : request.getPaymentTotal());
+        reimbursement.setRelatedPurchaseNumber(trimToNull(request.getRelatedPurchaseNumber()));
+        reimbursement.setHighValueExplanation(trimToNull(request.getHighValueExplanation()));
         reimbursement.setApplicant(resolveApplicant(request, currentUser));
         reimbursement.setDepartment(resolveDepartment(request, currentUser));
 
@@ -537,6 +651,42 @@ public class ReimbursementService {
                 .orElseThrow(() -> new BusinessException("applicant not found"));
     }
 
+    private synchronized String generateApprovalNumber() {
+        String prefix = "BX" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        int nextSequence = reimbursementRepository
+                .findTopByApprovalNumberStartingWithOrderByApprovalNumberDesc(prefix)
+                .map(Reimbursement::getApprovalNumber)
+                .map(number -> number.substring(prefix.length()))
+                .filter(sequence -> sequence.matches("\\d{3}"))
+                .map(Integer::parseInt)
+                .map(sequence -> sequence + 1)
+                .orElse(1);
+        if (nextSequence > 999) {
+            throw new BusinessException("daily reimbursement number limit exceeded");
+        }
+        return prefix + String.format("%03d", nextSequence);
+    }
+
+    private void validateSubmissionMaterials(Reimbursement reimbursement) {
+        if (reimbursement.getAmount() == null
+                || reimbursement.getAmount().compareTo(HIGH_VALUE_THRESHOLD) <= 0) {
+            return;
+        }
+        if (!StringUtils.hasText(reimbursement.getHighValueExplanation())) {
+            throw new BusinessException("large reimbursement explanation is required for amounts over 50000");
+        }
+        if (!attachmentRepository.existsByReimbursementIdAndAttachmentType(
+                reimbursement.getId(),
+                AttachmentType.MEETING_MINUTES
+        )) {
+            throw new BusinessException("meeting review material is required for amounts over 50000");
+        }
+    }
+
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
     private Department resolveDepartment(ReimbursementRequest request, AppUser currentUser) {
         if (currentUser.getRole() != UserRole.ADMIN || request.getDepartmentId() == null) {
             return currentUser.getDepartment();
@@ -547,7 +697,9 @@ public class ReimbursementService {
     }
 
     private boolean canView(AppUser currentUser, Reimbursement reimbursement) {
-        if (currentUser.getRole() == UserRole.ADMIN || currentUser.getRole() == UserRole.FINANCE) {
+        if (currentUser.getRole() == UserRole.ADMIN
+                || currentUser.getRole() == UserRole.FINANCE
+                || currentUser.getRole() == UserRole.EXECUTIVE) {
             return true;
         }
 
@@ -560,21 +712,44 @@ public class ReimbursementService {
             return sameDepartment(currentUser, reimbursement);
         }
 
+        if (currentUser.getRole() == UserRole.CASHIER) {
+            return reimbursement.getStatus() == ReimbursementStatus.EXECUTIVE_APPROVED
+                    || reimbursement.getStatus() == ReimbursementStatus.PAID
+                    || reimbursement.getStatus() == ReimbursementStatus.COMPLETED
+                    || reimbursement.getStatus() == ReimbursementStatus.APPROVED;
+        }
+
         return false;
+    }
+
+    private boolean canAccessReimbursements(AppUser currentUser) {
+        return currentUser.getRole() == UserRole.EMPLOYEE
+                || currentUser.getRole() == UserRole.DEPARTMENT_MANAGER
+                || currentUser.getRole() == UserRole.FINANCE
+                || currentUser.getRole() == UserRole.EXECUTIVE
+                || currentUser.getRole() == UserRole.CASHIER
+                || currentUser.getRole() == UserRole.ADMIN;
     }
 
     private boolean isPendingForUser(AppUser currentUser, Reimbursement reimbursement) {
         if (currentUser.getRole() == UserRole.ADMIN) {
             return reimbursement.getStatus() == ReimbursementStatus.SUBMITTED
-                    || reimbursement.getStatus() == ReimbursementStatus.DEPARTMENT_APPROVED;
+                    || reimbursement.getStatus() == ReimbursementStatus.FINANCE_INITIAL_APPROVED
+                    || reimbursement.getStatus() == ReimbursementStatus.DEPARTMENT_APPROVED
+                    || reimbursement.getStatus() == ReimbursementStatus.PAID;
         }
 
         if (currentUser.getRole() == UserRole.DEPARTMENT_MANAGER) {
-            return reimbursement.getStatus() == ReimbursementStatus.SUBMITTED
+            return reimbursement.getStatus() == ReimbursementStatus.FINANCE_INITIAL_APPROVED
                     && sameDepartment(currentUser, reimbursement);
         }
 
         if (currentUser.getRole() == UserRole.FINANCE) {
+            return reimbursement.getStatus() == ReimbursementStatus.SUBMITTED
+                    || reimbursement.getStatus() == ReimbursementStatus.PAID;
+        }
+
+        if (currentUser.getRole() == UserRole.EXECUTIVE) {
             return reimbursement.getStatus() == ReimbursementStatus.DEPARTMENT_APPROVED;
         }
 
@@ -583,7 +758,7 @@ public class ReimbursementService {
 
     private void assertCanView(AppUser currentUser, Reimbursement reimbursement) {
         if (!canView(currentUser, reimbursement)) {
-            throw new BusinessException("no permission to view this reimbursement");
+            throw new ForbiddenException("no permission to view this reimbursement");
         }
     }
 
@@ -608,10 +783,13 @@ public class ReimbursementService {
     }
 
     private boolean canViewBudget(AppUser currentUser, Budget budget) {
-        if (currentUser.getRole() == UserRole.ADMIN || currentUser.getRole() == UserRole.FINANCE) {
+        if (currentUser.getRole() == UserRole.ADMIN
+                || currentUser.getRole() == UserRole.FINANCE
+                || currentUser.getRole() == UserRole.EXECUTIVE) {
             return true;
         }
-        return currentUser.getDepartment() != null
+        return currentUser.getRole() == UserRole.DEPARTMENT_MANAGER
+                && currentUser.getDepartment() != null
                 && budget.getDepartment() != null
                 && currentUser.getDepartment().getId().equals(budget.getDepartment().getId());
     }
@@ -653,10 +831,14 @@ public class ReimbursementService {
     private String statusLabel(ReimbursementStatus status) {
         return switch (status) {
             case DRAFT -> "草稿";
-            case SUBMITTED -> "部门审批中";
-            case DEPARTMENT_APPROVED -> "财务审批中";
-            case FINANCE_APPROVED -> "财务已审批";
-            case APPROVED -> "已通过";
+            case SUBMITTED -> "财务初审中";
+            case FINANCE_INITIAL_APPROVED -> "部门负责人审批中";
+            case DEPARTMENT_APPROVED -> "执行院长审批中";
+            case EXECUTIVE_APPROVED -> "待出纳付款";
+            case PAID -> "财务复核中";
+            case COMPLETED -> "已完成";
+            case FINANCE_APPROVED -> "财务已审批（历史）";
+            case APPROVED -> "已通过（历史）";
             case REJECTED -> "已驳回";
         };
     }
@@ -728,8 +910,18 @@ public class ReimbursementService {
 
     private Path resolveAttachmentPath(Attachment attachment) {
         String fileUrl = attachment.getFileUrl();
-        String fileName = fileUrl.substring(fileUrl.lastIndexOf('/') + 1);
-        return Paths.get(uploadDir, "invoices", fileName).toAbsolutePath().normalize();
+        String relativePath = fileUrl.startsWith("/uploads/")
+                ? fileUrl.substring("/uploads/".length())
+                : fileUrl.substring(fileUrl.lastIndexOf('/') + 1);
+        Path uploadRoot = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path resolved = uploadRoot.resolve(relativePath).normalize();
+        if (!resolved.startsWith(uploadRoot)) {
+            throw new BusinessException("invalid attachment path");
+        }
+        if (!Files.exists(resolved) && !relativePath.contains("/")) {
+            return uploadRoot.resolve("invoices").resolve(relativePath).normalize();
+        }
+        return resolved;
     }
 
     private String normalize(String value) {
@@ -741,17 +933,18 @@ public class ReimbursementService {
             Reimbursement reimbursement,
             ApprovalRequest request
     ) {
-        if (reimbursement.getStatus() != ReimbursementStatus.SUBMITTED) {
-            throw new BusinessException("department can only approve submitted reimbursements");
+        if (reimbursement.getStatus() != ReimbursementStatus.FINANCE_INITIAL_APPROVED) {
+            throw new BusinessException("department approval requires finance initial review");
         }
-        if (!sameDepartment(currentUser, reimbursement)) {
+        if (currentUser.getRole() != UserRole.ADMIN && !sameDepartment(currentUser, reimbursement)) {
             throw new BusinessException("department manager can only approve own department reimbursements");
         }
 
         if (request.getAction() == ApprovalAction.APPROVE) {
             reimbursement.setStatus(ReimbursementStatus.DEPARTMENT_APPROVED);
         } else {
-            reimbursement.setStatus(ReimbursementStatus.REJECTED);
+            reimbursement.setStatus(ReimbursementStatus.DRAFT);
+            reimbursement.setSubmittedAt(null);
         }
 
         saveApprovalRecord(reimbursement, currentUser, "DEPARTMENT", request);
@@ -772,26 +965,58 @@ public class ReimbursementService {
             Reimbursement reimbursement,
             ApprovalRequest request
     ) {
-        if (reimbursement.getStatus() != ReimbursementStatus.DEPARTMENT_APPROVED) {
-            throw new BusinessException("finance can only approve reimbursements after department approval");
+        boolean initialReview = reimbursement.getStatus() == ReimbursementStatus.SUBMITTED;
+        boolean finalReview = reimbursement.getStatus() == ReimbursementStatus.PAID;
+        if (!initialReview && !finalReview) {
+            throw new BusinessException("finance can only perform initial review or final review");
         }
 
+        String node = initialReview ? "FINANCE_INITIAL" : "FINANCE_RECHECK";
+        String actionName = initialReview ? "财务初审" : "财务复核";
         if (request.getAction() == ApprovalAction.APPROVE) {
-            deductBudget(reimbursement);
-            reimbursement.setStatus(ReimbursementStatus.APPROVED);
+            if (initialReview) {
+                validateSubmissionMaterials(reimbursement);
+                reimbursement.setStatus(ReimbursementStatus.FINANCE_INITIAL_APPROVED);
+            } else {
+                deductBudget(reimbursement);
+                reimbursement.setStatus(ReimbursementStatus.COMPLETED);
+            }
         } else {
-            reimbursement.setStatus(ReimbursementStatus.REJECTED);
+            reimbursement.setStatus(ReimbursementStatus.DRAFT);
+            reimbursement.setSubmittedAt(null);
         }
 
-        saveApprovalRecord(reimbursement, currentUser, "FINANCE", request);
+        saveApprovalRecord(reimbursement, currentUser, node, request);
         Reimbursement saved = reimbursementRepository.save(reimbursement);
         operationLogService.record(
                 currentUser,
                 "审批管理",
-                "财务审批",
+                actionName,
                 saved.getId(),
                 saved.getTitle(),
                 approvalDetail(request)
+        );
+        return ReimbursementResponse.fromEntity(saved);
+    }
+
+    private ReimbursementResponse handleExecutiveApproval(
+            AppUser currentUser,
+            Reimbursement reimbursement,
+            ApprovalRequest request
+    ) {
+        if (reimbursement.getStatus() != ReimbursementStatus.DEPARTMENT_APPROVED) {
+            throw new BusinessException("executive approval requires department approval");
+        }
+        reimbursement.setStatus(request.getAction() == ApprovalAction.APPROVE
+                ? ReimbursementStatus.EXECUTIVE_APPROVED
+                : ReimbursementStatus.DRAFT);
+        if (request.getAction() == ApprovalAction.REJECT) {
+            reimbursement.setSubmittedAt(null);
+        }
+        saveApprovalRecord(reimbursement, currentUser, "EXECUTIVE", request);
+        Reimbursement saved = reimbursementRepository.save(reimbursement);
+        operationLogService.record(
+                currentUser, "审批管理", "执行院长审批", saved.getId(), saved.getTitle(), approvalDetail(request)
         );
         return ReimbursementResponse.fromEntity(saved);
     }
@@ -828,6 +1053,28 @@ public class ReimbursementService {
         record.setAction(request.getAction());
         record.setComment(StringUtils.hasText(request.getComment()) ? request.getComment().trim() : null);
         approvalRecordRepository.save(record);
+    }
+
+    private void saveApprovalRecord(
+            Reimbursement reimbursement,
+            AppUser approver,
+            String node,
+            ApprovalAction action,
+            String comment
+    ) {
+        ApprovalRecord record = new ApprovalRecord();
+        record.setReimbursement(reimbursement);
+        record.setApprover(approver);
+        record.setApprovalNode(node);
+        record.setAction(action);
+        record.setComment(trimToNull(comment));
+        approvalRecordRepository.save(record);
+    }
+
+    private void requireRejectionReason(ApprovalRequest request) {
+        if (request.getAction() == ApprovalAction.REJECT && !StringUtils.hasText(request.getComment())) {
+            throw new BusinessException("rejection reason is required");
+        }
     }
 
     private ApprovalRecord latestRecord(List<ApprovalRecord> records, String node) {
@@ -932,6 +1179,67 @@ public class ReimbursementService {
 
         String status = reimbursement.getStatus() == ReimbursementStatus.DRAFT ? "NOT_STARTED" : "IN_PROGRESS";
         return timelineNode("最终结果", status, null, "流程尚未结束", null, "FINAL_RESULT");
+    }
+
+    private ReimbursementTimelineNodeResponse processNode(
+            String title,
+            String node,
+            ReimbursementStatus pendingStatus,
+            ApprovalRecord record,
+            Reimbursement reimbursement
+    ) {
+        if (record != null) {
+            return timelineNode(
+                    title,
+                    record.getAction() == ApprovalAction.APPROVE ? "COMPLETED" : "REJECTED",
+                    record.getApprover(),
+                    approvalComment(record),
+                    record.getCreatedAt(),
+                    node
+            );
+        }
+        int currentRank = workflowRank(reimbursement.getStatus());
+        int pendingRank = workflowRank(pendingStatus);
+        if (currentRank > pendingRank) {
+            return timelineNode(title, "COMPLETED", null, "历史报销单已通过该环节", null, node);
+        }
+        if (currentRank == pendingRank) {
+            return timelineNode(title, "IN_PROGRESS", null, "等待" + title, null, node);
+        }
+        return timelineNode(title, "NOT_STARTED", null, "尚未进入该环节", null, node);
+    }
+
+    private ReimbursementTimelineNodeResponse researchInstituteFinalNode(
+            Reimbursement reimbursement,
+            ApprovalRecord financeRecheck
+    ) {
+        if (reimbursement.getStatus() == ReimbursementStatus.COMPLETED
+                || reimbursement.getStatus() == ReimbursementStatus.APPROVED) {
+            return timelineNode(
+                    "流程完成",
+                    "COMPLETED",
+                    financeRecheck == null ? null : financeRecheck.getApprover(),
+                    "财务复核通过，部门预算已扣减，报销流程完成",
+                    financeRecheck == null ? reimbursement.getUpdatedAt() : financeRecheck.getCreatedAt(),
+                    "FINAL_RESULT"
+            );
+        }
+        if (reimbursement.getStatus() == ReimbursementStatus.REJECTED) {
+            return timelineNode("流程完成", "REJECTED", null, "历史报销单已驳回", reimbursement.getUpdatedAt(), "FINAL_RESULT");
+        }
+        return timelineNode("流程完成", "NOT_STARTED", null, "财务复核通过后完成", null, "FINAL_RESULT");
+    }
+
+    private int workflowRank(ReimbursementStatus status) {
+        return switch (status) {
+            case DRAFT, REJECTED -> 0;
+            case SUBMITTED -> 1;
+            case FINANCE_INITIAL_APPROVED -> 2;
+            case DEPARTMENT_APPROVED -> 3;
+            case EXECUTIVE_APPROVED -> 4;
+            case PAID, FINANCE_APPROVED -> 5;
+            case COMPLETED, APPROVED -> 6;
+        };
     }
 
     private ReimbursementTimelineNodeResponse timelineNode(

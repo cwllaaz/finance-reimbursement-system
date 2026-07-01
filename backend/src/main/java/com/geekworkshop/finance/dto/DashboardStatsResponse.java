@@ -11,6 +11,8 @@ public class DashboardStatsResponse {
     private Long reimbursementCount;
     private Map<String, Long> statusCounts;
     private List<BudgetResponse> budgets;
+    private Long pendingOffsetCount;
+    private Long overdueAdvanceCount;
 
     public DashboardStatsResponse(
             BigDecimal monthAmount,
@@ -24,6 +26,8 @@ public class DashboardStatsResponse {
         this.reimbursementCount = reimbursementCount;
         this.statusCounts = statusCounts;
         this.budgets = budgets;
+        this.pendingOffsetCount = 0L;
+        this.overdueAdvanceCount = 0L;
     }
 
     public BigDecimal getMonthAmount() {
@@ -45,4 +49,9 @@ public class DashboardStatsResponse {
     public List<BudgetResponse> getBudgets() {
         return budgets;
     }
+
+    public Long getPendingOffsetCount() { return pendingOffsetCount; }
+    public void setPendingOffsetCount(Long value) { pendingOffsetCount = value; }
+    public Long getOverdueAdvanceCount() { return overdueAdvanceCount; }
+    public void setOverdueAdvanceCount(Long value) { overdueAdvanceCount = value; }
 }

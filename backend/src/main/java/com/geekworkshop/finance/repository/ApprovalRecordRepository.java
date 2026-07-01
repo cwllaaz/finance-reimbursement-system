@@ -19,4 +19,15 @@ public interface ApprovalRecordRepository extends JpaRepository<ApprovalRecord, 
     List<ApprovalRecord> findDetailByReimbursementIdOrderByCreatedAtAsc(@Param("reimbursementId") Long reimbursementId);
 
     List<ApprovalRecord> findByReimbursementIdOrderByCreatedAtAsc(Long reimbursementId);
+
+    @Query("""
+            select a from ApprovalRecord a
+            join fetch a.reimbursement r
+            left join fetch r.applicant
+            left join fetch r.department
+            left join fetch a.approver
+            where a.approver.id = :approverId
+            order by a.createdAt desc
+            """)
+    List<ApprovalRecord> findDetailsByApproverId(@Param("approverId") Long approverId);
 }

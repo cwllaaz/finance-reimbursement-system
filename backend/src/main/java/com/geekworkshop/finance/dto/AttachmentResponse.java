@@ -1,6 +1,7 @@
 package com.geekworkshop.finance.dto;
 
 import com.geekworkshop.finance.entity.Attachment;
+import com.geekworkshop.finance.entity.AttachmentType;
 
 import java.time.LocalDateTime;
 
@@ -12,6 +13,7 @@ public class AttachmentResponse {
     private String fileUrl;
     private String fileType;
     private Long fileSize;
+    private AttachmentType attachmentType;
     private LocalDateTime createdAt;
 
     public static AttachmentResponse fromEntity(Attachment attachment) {
@@ -22,6 +24,9 @@ public class AttachmentResponse {
         response.fileUrl = attachment.getFileUrl();
         response.fileType = attachment.getFileType();
         response.fileSize = attachment.getFileSize();
+        response.attachmentType = attachment.getAttachmentType() == null
+                ? AttachmentType.INVOICE
+                : attachment.getAttachmentType();
         response.createdAt = attachment.getCreatedAt();
         return response;
     }
@@ -48,6 +53,10 @@ public class AttachmentResponse {
 
     public Long getFileSize() {
         return fileSize;
+    }
+
+    public AttachmentType getAttachmentType() {
+        return attachmentType;
     }
 
     public LocalDateTime getCreatedAt() {

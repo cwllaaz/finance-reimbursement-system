@@ -41,4 +41,7 @@ public interface ReimbursementRepository extends JpaRepository<Reimbursement, Lo
             where r.id = :id
             """)
     Optional<Reimbursement> findDetailById(@Param("id") Long id);
+
+    Optional<Reimbursement> findTopByApprovalNumberStartingWithOrderByApprovalNumberDesc(String prefix);
+    Optional<Reimbursement> findByApprovalNumber(String approvalNumber);
 }

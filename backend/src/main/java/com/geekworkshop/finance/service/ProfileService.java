@@ -15,10 +15,19 @@ public class ProfileService {
 
     private final AppUserRepository appUserRepository;
     private final OperationLogService operationLogService;
+    private final PasswordService passwordService;
+    private final AuthService authService;
 
-    public ProfileService(AppUserRepository appUserRepository, OperationLogService operationLogService) {
+    public ProfileService(
+            AppUserRepository appUserRepository,
+            OperationLogService operationLogService,
+            PasswordService passwordService,
+            AuthService authService
+    ) {
         this.appUserRepository = appUserRepository;
         this.operationLogService = operationLogService;
+        this.passwordService = passwordService;
+        this.authService = authService;
     }
 
     @Transactional(readOnly = true)
@@ -43,15 +52,16 @@ public class ProfileService {
         String oldPassword = request.getOldPassword() == null ? "" : request.getOldPassword().trim();
         String newPassword = request.getNewPassword() == null ? "" : request.getNewPassword().trim();
 
-        if (!user.getPassword().equals(oldPassword)) {
+        if (!passwordService.matches(oldPassword, user.getPassword())) {
             throw new BusinessException("原密码不正确");
         }
-        if (user.getPassword().equals(newPassword)) {
+        if (passwordService.matches(newPassword, user.getPassword())) {
             throw new BusinessException("新密码不能和原密码相同");
         }
 
-        user.setPassword(newPassword);
+        user.setPassword(passwordService.encode(newPassword));
         appUserRepository.save(user);
+        authService.invalidateUserSessions(user.getId());
         operationLogService.record(user, "个人资料", "修改密码", user.getId(), user.getUsername(), "当前用户修改登录密码");
     }
 
