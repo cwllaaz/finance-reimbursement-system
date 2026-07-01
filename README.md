@@ -183,6 +183,7 @@ npm run build
 ```text
 Backend: 51 tests passed, BUILD SUCCESS
 Frontend: production build completed
+Frontend dependencies: npm audit found 0 vulnerabilities
 ```
 
 前端构建可能显示第三方 `PURE` 注释和大 chunk 警告，不影响生成 `dist`。
