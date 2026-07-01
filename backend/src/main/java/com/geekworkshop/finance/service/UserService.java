@@ -21,15 +21,21 @@ public class UserService {
     private final AppUserRepository appUserRepository;
     private final DepartmentRepository departmentRepository;
     private final OperationLogService operationLogService;
+    private final PasswordService passwordService;
+    private final AuthService authService;
 
     public UserService(
             AppUserRepository appUserRepository,
             DepartmentRepository departmentRepository,
-            OperationLogService operationLogService
+            OperationLogService operationLogService,
+            PasswordService passwordService,
+            AuthService authService
     ) {
         this.appUserRepository = appUserRepository;
         this.departmentRepository = departmentRepository;
         this.operationLogService = operationLogService;
+        this.passwordService = passwordService;
+        this.authService = authService;
     }
 
     @Transactional(readOnly = true)
@@ -64,7 +70,7 @@ public class UserService {
 
         AppUser user = new AppUser();
         user.setUsername(username);
-        user.setPassword(request.getPassword().trim());
+        user.setPassword(passwordService.encode(request.getPassword().trim()));
         fillUser(user, request);
         AppUser saved = appUserRepository.save(user);
         operationLogService.record(currentUser, "用户管理", "新增用户", saved.getId(), saved.getUsername(), "新增账号：" + saved.getRealName());
@@ -83,7 +89,8 @@ public class UserService {
 
         user.setUsername(username);
         if (StringUtils.hasText(request.getPassword())) {
-            user.setPassword(request.getPassword().trim());
+            user.setPassword(passwordService.encode(request.getPassword().trim()));
+            authService.invalidateUserSessions(user.getId());
         }
         fillUser(user, request);
         AppUser saved = appUserRepository.save(user);

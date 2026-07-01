@@ -2,6 +2,8 @@ package com.geekworkshop.finance.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -33,6 +35,10 @@ public class Attachment extends BaseEntity {
 
     @Column(name = "file_size")
     private Long fileSize;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "attachment_type", length = 40)
+    private AttachmentType attachmentType;
 
     public Long getId() {
         return id;
@@ -76,5 +82,13 @@ public class Attachment extends BaseEntity {
 
     public void setFileSize(Long fileSize) {
         this.fileSize = fileSize;
+    }
+
+    public AttachmentType getAttachmentType() {
+        return attachmentType;
+    }
+
+    public void setAttachmentType(AttachmentType attachmentType) {
+        this.attachmentType = attachmentType;
     }
 }

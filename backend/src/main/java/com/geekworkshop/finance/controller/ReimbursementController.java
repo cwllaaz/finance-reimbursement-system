@@ -6,11 +6,13 @@ import com.geekworkshop.finance.dto.AttachmentResponse;
 import com.geekworkshop.finance.dto.InvoiceOcrRequest;
 import com.geekworkshop.finance.dto.InvoiceOcrResponse;
 import com.geekworkshop.finance.dto.OcrResponse;
+import com.geekworkshop.finance.dto.PaymentRequest;
 import com.geekworkshop.finance.dto.ReimbursementDetailResponse;
 import com.geekworkshop.finance.dto.ReimbursementRequest;
 import com.geekworkshop.finance.dto.ReimbursementResponse;
 import com.geekworkshop.finance.dto.ReimbursementTimelineNodeResponse;
 import com.geekworkshop.finance.entity.AppUser;
+import com.geekworkshop.finance.entity.AttachmentType;
 import com.geekworkshop.finance.entity.ReimbursementStatus;
 import com.geekworkshop.finance.service.AuthService;
 import com.geekworkshop.finance.service.ReimbursementService;
@@ -67,6 +69,12 @@ public class ReimbursementController {
     ) {
         AppUser currentUser = authService.requireUser(token);
         return reimbursementService.pending(currentUser, keyword);
+    }
+
+    @GetMapping("/payment-tasks")
+    public List<ReimbursementResponse> paymentTasks(@RequestHeader("X-Auth-Token") String token) {
+        AppUser currentUser = authService.requireUser(token);
+        return reimbursementService.paymentTasks(currentUser);
     }
 
     @GetMapping("/export")
@@ -148,6 +156,16 @@ public class ReimbursementController {
         return reimbursementService.approve(currentUser, id, request);
     }
 
+    @PostMapping("/{id}/payment")
+    public ReimbursementResponse confirmPayment(
+            @RequestHeader("X-Auth-Token") String token,
+            @PathVariable Long id,
+            @Valid @RequestBody PaymentRequest request
+    ) {
+        AppUser currentUser = authService.requireUser(token);
+        return reimbursementService.confirmPayment(currentUser, id, request);
+    }
+
     @GetMapping("/{id}/approval-records")
     public List<ApprovalRecordResponse> approvalRecords(
             @RequestHeader("X-Auth-Token") String token,
@@ -161,10 +179,11 @@ public class ReimbursementController {
     public AttachmentResponse uploadAttachment(
             @RequestHeader("X-Auth-Token") String token,
             @PathVariable Long id,
+            @RequestParam(defaultValue = "INVOICE") AttachmentType attachmentType,
             @RequestPart("file") MultipartFile file
     ) {
         AppUser currentUser = authService.requireUser(token);
-        return reimbursementService.uploadAttachment(currentUser, id, file);
+        return reimbursementService.uploadAttachment(currentUser, id, attachmentType, file);
     }
 
     @PostMapping("/{id}/ocr")

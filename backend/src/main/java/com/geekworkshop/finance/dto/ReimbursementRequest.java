@@ -33,6 +33,35 @@ public class ReimbursementRequest {
     @Size(max = 500, message = "description is too long")
     private String description;
 
+    @Size(max = 40, message = "applicantPhone is too long")
+    private String applicantPhone;
+
+    @Size(max = 60, message = "budgetNumber is too long")
+    private String budgetNumber;
+
+    @Size(max = 500, message = "reimbursementReason is too long")
+    private String reimbursementReason;
+
+    private LocalDate paymentDate;
+
+    @Size(max = 160, message = "payeeName is too long")
+    private String payeeName;
+
+    @Size(max = 80, message = "bankAccount is too long")
+    private String bankAccount;
+
+    @Size(max = 160, message = "bankName is too long")
+    private String bankName;
+
+    @DecimalMin(value = "0.00", message = "paymentTotal cannot be negative")
+    private BigDecimal paymentTotal;
+
+    @Size(max = 60, message = "relatedPurchaseNumber is too long")
+    private String relatedPurchaseNumber;
+
+    @Size(max = 1000, message = "highValueExplanation is too long")
+    private String highValueExplanation;
+
     private ReimbursementStatus status;
 
     public Long getApplicantId() {
@@ -89,6 +118,86 @@ public class ReimbursementRequest {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public String getApplicantPhone() {
+        return applicantPhone;
+    }
+
+    public void setApplicantPhone(String applicantPhone) {
+        this.applicantPhone = applicantPhone;
+    }
+
+    public String getBudgetNumber() {
+        return budgetNumber;
+    }
+
+    public void setBudgetNumber(String budgetNumber) {
+        this.budgetNumber = budgetNumber;
+    }
+
+    public String getReimbursementReason() {
+        return reimbursementReason;
+    }
+
+    public void setReimbursementReason(String reimbursementReason) {
+        this.reimbursementReason = reimbursementReason;
+    }
+
+    public LocalDate getPaymentDate() {
+        return paymentDate;
+    }
+
+    public void setPaymentDate(LocalDate paymentDate) {
+        this.paymentDate = paymentDate;
+    }
+
+    public String getPayeeName() {
+        return payeeName;
+    }
+
+    public void setPayeeName(String payeeName) {
+        this.payeeName = payeeName;
+    }
+
+    public String getBankAccount() {
+        return bankAccount;
+    }
+
+    public void setBankAccount(String bankAccount) {
+        this.bankAccount = bankAccount;
+    }
+
+    public String getBankName() {
+        return bankName;
+    }
+
+    public void setBankName(String bankName) {
+        this.bankName = bankName;
+    }
+
+    public BigDecimal getPaymentTotal() {
+        return paymentTotal;
+    }
+
+    public void setPaymentTotal(BigDecimal paymentTotal) {
+        this.paymentTotal = paymentTotal;
+    }
+
+    public String getRelatedPurchaseNumber() {
+        return relatedPurchaseNumber;
+    }
+
+    public void setRelatedPurchaseNumber(String relatedPurchaseNumber) {
+        this.relatedPurchaseNumber = relatedPurchaseNumber;
+    }
+
+    public String getHighValueExplanation() {
+        return highValueExplanation;
+    }
+
+    public void setHighValueExplanation(String highValueExplanation) {
+        this.highValueExplanation = highValueExplanation;
     }
 
     public ReimbursementStatus getStatus() {

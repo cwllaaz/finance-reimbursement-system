@@ -79,7 +79,9 @@ backend/src/main/resources/application-prod.properties
 --spring.profiles.active=prod
 ```
 
-它会从环境变量读取数据库密码、上传目录和百度 OCR 配置。
+它会从环境变量读取数据库密码、上传目录、登录 token 有效期和百度 OCR 配置。默认 token 有效期为 120 分钟，可通过 `AUTH_TOKEN_TTL_MINUTES` 调整。
+
+系统启动时会自动将旧用户的明文密码迁移为 BCrypt，不需要手工重置账号密码。上传目录不能再由 Nginx 公开暴露，附件下载统一通过 `/api/attachments/.../download` 完成登录和业务权限校验。
 
 前端新增了：
 

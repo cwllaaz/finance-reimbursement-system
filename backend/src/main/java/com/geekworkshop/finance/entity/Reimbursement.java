@@ -24,6 +24,9 @@ public class Reimbursement extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "approval_number", unique = true, length = 32)
+    private String approvalNumber;
+
     @Column(nullable = false, length = 120)
     private String title;
 
@@ -38,6 +41,39 @@ public class Reimbursement extends BaseEntity {
 
     @Column(length = 500)
     private String description;
+
+    @Column(name = "applicant_phone", length = 40)
+    private String applicantPhone;
+
+    @Column(name = "budget_number", length = 60)
+    private String budgetNumber;
+
+    @Column(name = "reimbursement_reason", length = 500)
+    private String reimbursementReason;
+
+    @Column(name = "payment_date")
+    private LocalDate paymentDate;
+
+    @Column(name = "payee_name", length = 160)
+    private String payeeName;
+
+    @Column(name = "bank_account", length = 80)
+    private String bankAccount;
+
+    @Column(name = "bank_name", length = 160)
+    private String bankName;
+
+    @Column(name = "payment_total", precision = 12, scale = 2)
+    private BigDecimal paymentTotal;
+
+    @Column(name = "payment_voucher_number", length = 80)
+    private String paymentVoucherNumber;
+
+    @Column(name = "related_purchase_number", length = 40)
+    private String relatedPurchaseNumber;
+
+    @Column(name = "high_value_explanation", length = 1000)
+    private String highValueExplanation;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 40)
@@ -56,6 +92,14 @@ public class Reimbursement extends BaseEntity {
 
     public Long getId() {
         return id;
+    }
+
+    public String getApprovalNumber() {
+        return approvalNumber;
+    }
+
+    public void setApprovalNumber(String approvalNumber) {
+        this.approvalNumber = approvalNumber;
     }
 
     public String getTitle() {
@@ -96,6 +140,94 @@ public class Reimbursement extends BaseEntity {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public String getApplicantPhone() {
+        return applicantPhone;
+    }
+
+    public void setApplicantPhone(String applicantPhone) {
+        this.applicantPhone = applicantPhone;
+    }
+
+    public String getBudgetNumber() {
+        return budgetNumber;
+    }
+
+    public void setBudgetNumber(String budgetNumber) {
+        this.budgetNumber = budgetNumber;
+    }
+
+    public String getReimbursementReason() {
+        return reimbursementReason;
+    }
+
+    public void setReimbursementReason(String reimbursementReason) {
+        this.reimbursementReason = reimbursementReason;
+    }
+
+    public LocalDate getPaymentDate() {
+        return paymentDate;
+    }
+
+    public void setPaymentDate(LocalDate paymentDate) {
+        this.paymentDate = paymentDate;
+    }
+
+    public String getPayeeName() {
+        return payeeName;
+    }
+
+    public void setPayeeName(String payeeName) {
+        this.payeeName = payeeName;
+    }
+
+    public String getBankAccount() {
+        return bankAccount;
+    }
+
+    public void setBankAccount(String bankAccount) {
+        this.bankAccount = bankAccount;
+    }
+
+    public String getBankName() {
+        return bankName;
+    }
+
+    public void setBankName(String bankName) {
+        this.bankName = bankName;
+    }
+
+    public BigDecimal getPaymentTotal() {
+        return paymentTotal;
+    }
+
+    public void setPaymentTotal(BigDecimal paymentTotal) {
+        this.paymentTotal = paymentTotal;
+    }
+
+    public String getPaymentVoucherNumber() {
+        return paymentVoucherNumber;
+    }
+
+    public void setPaymentVoucherNumber(String paymentVoucherNumber) {
+        this.paymentVoucherNumber = paymentVoucherNumber;
+    }
+
+    public String getRelatedPurchaseNumber() {
+        return relatedPurchaseNumber;
+    }
+
+    public void setRelatedPurchaseNumber(String relatedPurchaseNumber) {
+        this.relatedPurchaseNumber = relatedPurchaseNumber;
+    }
+
+    public String getHighValueExplanation() {
+        return highValueExplanation;
+    }
+
+    public void setHighValueExplanation(String highValueExplanation) {
+        this.highValueExplanation = highValueExplanation;
     }
 
     public ReimbursementStatus getStatus() {

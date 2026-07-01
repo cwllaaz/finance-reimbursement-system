@@ -4,5 +4,8 @@ public enum UserRole {
     EMPLOYEE,
     DEPARTMENT_MANAGER,
     FINANCE,
+    OFFICE,
+    EXECUTIVE,
+    CASHIER,
     ADMIN
 }
