@@ -6,6 +6,8 @@
 
 - 后端：Spring Boot，已通过 60 项自动化测试。
 - 前端：Vue 3 + Element Plus，生产构建通过。
+- 前端结构：已按 `layouts`、`views`、`components`、`api`、`composables` 和 `router` 拆分，使用 Vue Router 管理独立页面。
+- 界面验收：7 类演示角色、18 条路由权限校验通过，并完成桌面、笔记本和手机宽度检查。
 - 数据库：MySQL 8，提供完整初始化脚本并支持 JPA 自动兼容旧数据。
 - 部署：提供 Nginx、systemd 和生产环境变量模板。
 - 演示数据：报销、申购、劳务、借款均包含草稿、审批中、待后续处理和已完成示例。
@@ -19,6 +21,15 @@
 - 我的待办：按照角色、当前审批节点和部门范围返回待处理事项。
 - 已办事项：根据真实审批、付款和复核记录生成。
 - 支持业务类型、状态和关键词筛选。
+
+### 前端界面与交互
+
+- 固定深色侧边栏、统一顶部栏和可折叠菜单，当前菜单使用蓝色选中状态。
+- 每个菜单对应独立路由，刷新后保持当前页面，浏览器前进和后退可正常使用。
+- 无权限路由会跳转到当前角色的默认页面；登录过期后清理本地状态并返回登录页。
+- 业务列表统一页面标题、筛选工具栏、数据表格、状态标签和操作区。
+- 新增、编辑、详情和审批弹窗统一必填提示、滚动区域、固定底部操作栏和防重复提交。
+- 仪表盘和业务页面适配常见桌面、笔记本及手机宽度，表格在小屏幕下可横向滚动。
 
 ### 业务模块
 
@@ -178,6 +189,7 @@ cd backend
 ```powershell
 cd frontend
 npm ci
+npm run test:roles
 npm run build
 ```
 
@@ -185,6 +197,7 @@ npm run build
 
 ```text
 Backend: 60 tests passed, BUILD SUCCESS
+Frontend role access: 7 roles and 18 routes passed
 Frontend: production build completed
 Frontend dependencies: npm audit found 0 vulnerabilities
 ```
