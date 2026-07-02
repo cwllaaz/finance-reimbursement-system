@@ -56,10 +56,13 @@ public class ReimbursementController {
     public List<ReimbursementResponse> list(
             @RequestHeader("X-Auth-Token") String token,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) ReimbursementStatus status
+            @RequestParam(required = false) ReimbursementStatus status,
+            @RequestParam(required = false) List<ReimbursementStatus> statuses,
+            @RequestParam(required = false) LocalDate dateFrom,
+            @RequestParam(required = false) LocalDate dateTo
     ) {
         AppUser currentUser = authService.requireUser(token);
-        return reimbursementService.list(currentUser, keyword, status);
+        return reimbursementService.list(currentUser, keyword, status, statuses, dateFrom, dateTo);
     }
 
     @GetMapping("/pending")

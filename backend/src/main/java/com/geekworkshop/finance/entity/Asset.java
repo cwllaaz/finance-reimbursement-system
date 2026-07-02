@@ -38,6 +38,11 @@ public class Asset extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "custodian_id")
     private AppUser custodian;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "claimed_by")
+    private AppUser claimedBy;
+    @Column(name = "claimed_at")
+    private LocalDateTime claimedAt;
 
     public Long getId() { return id; }
     public String getAssetNumber() { return assetNumber; }
@@ -64,4 +69,8 @@ public class Asset extends BaseEntity {
     public void setStatus(AssetStatus status) { this.status = status; }
     public AppUser getCustodian() { return custodian; }
     public void setCustodian(AppUser custodian) { this.custodian = custodian; }
+    public AppUser getClaimedBy() { return claimedBy; }
+    public void setClaimedBy(AppUser claimedBy) { this.claimedBy = claimedBy; }
+    public LocalDateTime getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(LocalDateTime claimedAt) { this.claimedAt = claimedAt; }
 }

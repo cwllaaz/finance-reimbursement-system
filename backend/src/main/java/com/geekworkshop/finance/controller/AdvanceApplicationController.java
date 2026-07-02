@@ -24,9 +24,11 @@ public class AdvanceApplicationController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) AdvanceType type,
             @RequestParam(required = false) AdvanceStatus status,
-            @RequestParam(required = false) SettlementStatus settlementStatus
+            @RequestParam(required = false) SettlementStatus settlementStatus,
+            @RequestParam(required = false) List<SettlementStatus> settlementStatuses
     ) {
-        return service.list(authService.requireUser(token), keyword, type, status, settlementStatus);
+        return service.list(
+                authService.requireUser(token), keyword, type, status, settlementStatus, settlementStatuses);
     }
     @GetMapping("/{id}")
     public AdvanceApplicationResponse detail(@RequestHeader("X-Auth-Token") String token, @PathVariable Long id) {

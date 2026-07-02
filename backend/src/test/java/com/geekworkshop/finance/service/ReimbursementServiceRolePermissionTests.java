@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -170,6 +171,50 @@ class ReimbursementServiceRolePermissionTests {
     }
 
     @Test
+    void reimbursementListCombinesDateStatusAndDepartmentFilters() {
+        Department research = department(1L, "Research");
+        Department finance = department(2L, "Finance");
+        AppUser manager = user(UserRole.DEPARTMENT_MANAGER, research);
+        Reimbursement currentCompleted = reimbursement(research, "100.00", ReimbursementStatus.COMPLETED);
+        Reimbursement oldCompleted = reimbursement(research, "200.00", ReimbursementStatus.COMPLETED);
+        oldCompleted.setExpenseDate(LocalDate.now().minusMonths(1));
+        Reimbursement currentRejected = reimbursement(research, "300.00", ReimbursementStatus.REJECTED);
+        Reimbursement otherDepartment = reimbursement(finance, "400.00", ReimbursementStatus.APPROVED);
+        when(reimbursementRepository.search(null, null)).thenReturn(List.of(
+                currentCompleted, oldCompleted, currentRejected, otherDepartment
+        ));
+        LocalDate firstDay = LocalDate.now().withDayOfMonth(1);
+        LocalDate lastDay = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
+
+        List<ReimbursementResponse> result = service.list(
+                manager,
+                null,
+                null,
+                List.of(ReimbursementStatus.COMPLETED, ReimbursementStatus.APPROVED),
+                firstDay,
+                lastDay
+        );
+
+        assertEquals(1, result.size());
+        assertEquals(new BigDecimal("100.00"), result.getFirst().getAmount());
+    }
+
+    @Test
+    void officeCannotUseReimbursementListFiltersToBypassModulePermission() {
+        AppUser office = user(UserRole.OFFICE, department(4L, "Office"));
+
+        assertThrows(ForbiddenException.class, () -> service.list(
+                office,
+                null,
+                null,
+                List.of(ReimbursementStatus.COMPLETED),
+                LocalDate.now().withDayOfMonth(1),
+                LocalDate.now()
+        ));
+        verify(reimbursementRepository, never()).search(any(), any());
+    }
+
+    @Test
     void createGeneratesDailyApprovalNumberAndCopiesInternalVoucherFields() {
         AppUser employee = user(UserRole.EMPLOYEE, department(1L, "Research"));
         ReflectionTestUtils.setField(employee, "id", 8L);
@@ -200,6 +245,17 @@ class ReimbursementServiceRolePermissionTests {
         reimbursement.setApplicant(employee);
         reimbursement.setHighValueExplanation("院务会议审议通过");
         when(reimbursementRepository.findDetailById(99L)).thenReturn(Optional.of(reimbursement));
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentType(99L, AttachmentType.INVOICE))
+                .thenReturn(true);
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentTypeIn(
+                99L,
+                List.of(
+                        AttachmentType.CONTRACT,
+                        AttachmentType.MEETING_MINUTES,
+                        AttachmentType.BANK_RECEIPT,
+                        AttachmentType.OTHER
+                )
+        )).thenReturn(true);
         when(attachmentRepository.existsByReimbursementIdAndAttachmentType(99L, com.geekworkshop.finance.entity.AttachmentType.MEETING_MINUTES))
                 .thenReturn(false);
 
@@ -213,12 +269,76 @@ class ReimbursementServiceRolePermissionTests {
     }
 
     @Test
+    void submittingDraftRequiresInvoiceAndOtherCredential() {
+        Department research = department(1L, "Research");
+        AppUser employee = user(UserRole.EMPLOYEE, research);
+        ReflectionTestUtils.setField(employee, "id", 8L);
+        Reimbursement reimbursement = reimbursement(research, "1200.00", ReimbursementStatus.DRAFT);
+        ReflectionTestUtils.setField(reimbursement, "id", 100L);
+        reimbursement.setApplicant(employee);
+        when(reimbursementRepository.findDetailById(100L)).thenReturn(Optional.of(reimbursement));
+
+        BusinessException missingInvoice = assertThrows(
+                BusinessException.class,
+                () -> service.submit(employee, 100L)
+        );
+        assertTrue(missingInvoice.getMessage().contains("发票"));
+
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentType(100L, AttachmentType.INVOICE))
+                .thenReturn(true);
+        BusinessException missingOtherCredential = assertThrows(
+                BusinessException.class,
+                () -> service.submit(employee, 100L)
+        );
+        assertTrue(missingOtherCredential.getMessage().contains("其他凭证"));
+    }
+
+    @Test
+    void submittingDraftSucceedsWhenRequiredAttachmentsExist() {
+        Department research = department(1L, "Research");
+        AppUser employee = user(UserRole.EMPLOYEE, research);
+        ReflectionTestUtils.setField(employee, "id", 8L);
+        Reimbursement reimbursement = reimbursement(research, "1200.00", ReimbursementStatus.DRAFT);
+        ReflectionTestUtils.setField(reimbursement, "id", 101L);
+        reimbursement.setApplicant(employee);
+        when(reimbursementRepository.findDetailById(101L)).thenReturn(Optional.of(reimbursement));
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentType(101L, AttachmentType.INVOICE))
+                .thenReturn(true);
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentTypeIn(
+                101L,
+                List.of(
+                        AttachmentType.CONTRACT,
+                        AttachmentType.MEETING_MINUTES,
+                        AttachmentType.BANK_RECEIPT,
+                        AttachmentType.OTHER
+                )
+        )).thenReturn(true);
+        when(reimbursementRepository.save(reimbursement)).thenReturn(reimbursement);
+
+        ReimbursementResponse response = service.submit(employee, 101L);
+
+        assertEquals(ReimbursementStatus.SUBMITTED, response.getStatus());
+        assertTrue(reimbursement.getSubmittedAt() != null);
+    }
+
+    @Test
     void financeInitialReviewMovesToDepartmentApproval() {
         Department research = department(1L, "Research");
         AppUser finance = user(UserRole.FINANCE, department(2L, "Finance"));
         Reimbursement reimbursement = reimbursement(research, "1200.00", ReimbursementStatus.SUBMITTED);
         ReflectionTestUtils.setField(reimbursement, "id", 11L);
         when(reimbursementRepository.findDetailById(11L)).thenReturn(Optional.of(reimbursement));
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentType(11L, AttachmentType.INVOICE))
+                .thenReturn(true);
+        when(attachmentRepository.existsByReimbursementIdAndAttachmentTypeIn(
+                11L,
+                List.of(
+                        AttachmentType.CONTRACT,
+                        AttachmentType.MEETING_MINUTES,
+                        AttachmentType.BANK_RECEIPT,
+                        AttachmentType.OTHER
+                )
+        )).thenReturn(true);
         when(reimbursementRepository.save(reimbursement)).thenReturn(reimbursement);
         ApprovalRequest request = approval(ApprovalAction.APPROVE, "票据完整");
 

@@ -240,7 +240,7 @@ public class PurchaseApplicationService {
         if (application.getAmount().compareTo(LARGE_PURCHASE_THRESHOLD) > 0
                 && !attachmentRepository.existsByPurchaseApplicationIdAndAttachmentType(
                         application.getId(), PurchaseAttachmentType.MEETING_MINUTES)) {
-            throw new BusinessException("超过 5 万元的申购必须上传院务委员会审议材料");
+            throw new BusinessException("5万元以上申购必须上传院务委员会审议材料");
         }
     }
 

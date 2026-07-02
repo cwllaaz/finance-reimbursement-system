@@ -15,7 +15,7 @@ public class AssetAcceptance extends BaseEntity {
     @JoinColumn(name = "purchase_application_id", nullable = false, unique = true)
     private PurchaseApplication purchaseApplication;
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "accepted_by", nullable = false)
+    @JoinColumn(name = "accepted_by")
     private AppUser acceptedBy;
     @Column(name = "received_at", nullable = false)
     private LocalDateTime receivedAt;

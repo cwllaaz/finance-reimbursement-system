@@ -34,6 +34,10 @@ desktop.ini
 
 # Local generated documents and checks
 *.docx
+!财务报销与预算管理系统功能汇总.docx
+!财务项目使用文档.docx
+!财务项目汇报.docx
+!财务系统Web端访问使用文档.docx
 docx_render_check/
 
 # Backup and deployment packages

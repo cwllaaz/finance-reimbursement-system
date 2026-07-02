@@ -96,7 +96,7 @@ public class DataInitializer implements CommandLineRunner {
         AppUser employee = ensureUser("employee", "123456", "Student Zhang", UserRole.EMPLOYEE, research);
         ensureUser("manager", "123456", "Manager Wang", UserRole.DEPARTMENT_MANAGER, research);
         ensureUser("finance", "123456", "Accountant Zhao", UserRole.FINANCE, finance);
-        ensureUser("office", "123456", "Office Chen", UserRole.OFFICE, office);
+        AppUser officeUser = ensureUser("office", "123456", "Office Chen", UserRole.OFFICE, office);
         AppUser executive = ensureUser("executive", "123456", "Executive Dean", UserRole.EXECUTIVE, leadership);
         ensureUser("cashier", "123456", "Cashier Liu", UserRole.CASHIER, finance);
         ensureUser("admin", "123456", "System Admin", UserRole.ADMIN, finance);
@@ -108,7 +108,7 @@ public class DataInitializer implements CommandLineRunner {
         ensureDemoLaborApplications(employee, finance);
         ensureDemoAdvanceApplications(employee, finance);
         ensureDemoIncomeRecords(finance, executive);
-        ensureDemoAssets(office, employee);
+        ensureDemoAssets(officeUser, employee);
     }
 
     private Department ensureDepartment(String code, String name, String managerName) {
@@ -344,7 +344,7 @@ public class DataInitializer implements CommandLineRunner {
         incomeRecordRepository.save(second);
     }
 
-    private void ensureDemoAssets(Department office, AppUser officeUser) {
+    private void ensureDemoAssets(AppUser officeUser, AppUser actualUser) {
         if (assetAcceptanceRepository.count() > 0 || assetRepository.count() > 0) {
             return;
         }
@@ -380,7 +380,9 @@ public class DataInitializer implements CommandLineRunner {
         asset.setReceivedAt(LocalDateTime.now().minusDays(11));
         asset.setLocation("科研楼 3 层实验室");
         asset.setStatus(AssetStatus.IN_USE);
-        asset.setCustodian(officeUser);
+        asset.setClaimedBy(actualUser);
+        asset.setClaimedAt(LocalDateTime.now().minusDays(10));
+        asset.setCustodian(actualUser);
         asset = assetRepository.save(asset);
 
         AssetHistory inbound = new AssetHistory();
@@ -388,10 +390,20 @@ public class DataInitializer implements CommandLineRunner {
         inbound.setReceiptNumber(acceptance.getAcceptanceNumber());
         inbound.setAction(AssetHistoryAction.ACCEPTED_INBOUND);
         inbound.setOperator(officeUser);
-        inbound.setCustodian(officeUser);
-        inbound.setLocation("科研楼 3 层实验室");
-        inbound.setAssetStatus(AssetStatus.IN_USE);
-        inbound.setRemark("验收入库并交付使用");
+        inbound.setLocation("办公室设备库");
+        inbound.setAssetStatus(AssetStatus.IN_STOCK);
+        inbound.setRemark("办公室验收入库");
         assetHistoryRepository.save(inbound);
+
+        AssetHistory claimed = new AssetHistory();
+        claimed.setAsset(asset);
+        claimed.setReceiptNumber("LY" + LocalDate.now().minusDays(10).toString().replace("-", "") + "001");
+        claimed.setAction(AssetHistoryAction.CLAIMED);
+        claimed.setOperator(officeUser);
+        claimed.setCustodian(actualUser);
+        claimed.setLocation("科研楼 3 层实验室");
+        claimed.setAssetStatus(AssetStatus.IN_USE);
+        claimed.setRemark("办公室办理领用，实际使用人：" + actualUser.getRealName());
+        assetHistoryRepository.save(claimed);
     }
 }
