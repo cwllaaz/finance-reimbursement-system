@@ -41,6 +41,13 @@ public class AssetController {
         return assetService.eligiblePurchases(authService.requireUser(token));
     }
 
+    @GetMapping("/claimants")
+    public List<AssetUserOptionResponse> claimantOptions(
+            @RequestHeader("X-Auth-Token") String token
+    ) {
+        return assetService.claimantOptions(authService.requireUser(token));
+    }
+
     @PostMapping("/acceptance")
     @ResponseStatus(HttpStatus.CREATED)
     public AssetAcceptanceResponse acceptInbound(

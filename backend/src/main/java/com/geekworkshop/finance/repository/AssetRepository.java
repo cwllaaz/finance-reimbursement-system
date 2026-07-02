@@ -11,7 +11,9 @@ public interface AssetRepository extends JpaRepository<Asset, Long> {
     @Query("""
         select a from Asset a
         left join fetch a.custodian
+        left join fetch a.claimedBy
         join fetch a.acceptance ac
+        left join fetch ac.acceptedBy
         join fetch ac.purchaseApplication p
         left join fetch p.department
         order by a.createdAt desc
@@ -21,7 +23,9 @@ public interface AssetRepository extends JpaRepository<Asset, Long> {
     @Query("""
         select a from Asset a
         left join fetch a.custodian
+        left join fetch a.claimedBy
         join fetch a.acceptance ac
+        left join fetch ac.acceptedBy
         join fetch ac.purchaseApplication p
         left join fetch p.department
         where a.id = :id

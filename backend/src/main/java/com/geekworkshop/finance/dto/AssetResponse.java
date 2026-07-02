@@ -11,6 +11,8 @@ public record AssetResponse(
         String itemName, String specification, String manufacturer,
         Integer quantity, BigDecimal totalPrice, LocalDateTime receivedAt,
         String location, AssetStatus status, Long custodianId, String custodianName,
+        Long acceptedById, String acceptedByName, LocalDateTime acceptedAt,
+        Long claimantId, String claimantName, LocalDateTime claimedAt,
         String departmentName, List<AssetHistoryResponse> history
 ) {
     public static AssetResponse fromEntity(Asset asset, List<AssetHistoryResponse> history) {
@@ -22,6 +24,12 @@ public record AssetResponse(
                 asset.getTotalPrice(), asset.getReceivedAt(), asset.getLocation(), asset.getStatus(),
                 asset.getCustodian() == null ? null : asset.getCustodian().getId(),
                 asset.getCustodian() == null ? null : asset.getCustodian().getRealName(),
+                asset.getAcceptance().getAcceptedBy() == null ? null : asset.getAcceptance().getAcceptedBy().getId(),
+                asset.getAcceptance().getAcceptedBy() == null ? null : asset.getAcceptance().getAcceptedBy().getRealName(),
+                asset.getAcceptance().getReceivedAt(),
+                asset.getClaimedBy() == null ? null : asset.getClaimedBy().getId(),
+                asset.getClaimedBy() == null ? null : asset.getClaimedBy().getRealName(),
+                asset.getClaimedAt(),
                 purchase.getDepartment() == null ? null : purchase.getDepartment().getName(), history);
     }
 }

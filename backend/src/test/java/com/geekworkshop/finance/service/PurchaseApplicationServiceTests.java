@@ -116,7 +116,37 @@ class PurchaseApplicationServiceTests {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.submit(applicant, 100L));
 
-        assertTrue(exception.getMessage().contains("5 万元"));
+        assertEquals("5万元以上申购必须上传院务委员会审议材料", exception.getMessage());
+    }
+
+    @Test
+    void purchaseBelowThresholdCanBeSubmittedWithoutMeetingMinutes() {
+        Department department = department(1L);
+        AppUser applicant = user(41L, UserRole.OFFICE, department);
+        PurchaseApplication application = application(101L, department, PurchaseStatus.DRAFT, "49999.99");
+        application.setApplicant(applicant);
+        when(applicationRepository.findDetailById(101L)).thenReturn(Optional.of(application));
+
+        var response = service.submit(applicant, 101L);
+
+        assertEquals(PurchaseStatus.SUBMITTED, response.status());
+        verify(attachmentRepository, never()).existsByPurchaseApplicationIdAndAttachmentType(
+                101L, PurchaseAttachmentType.MEETING_MINUTES);
+    }
+
+    @Test
+    void purchaseAtThresholdCanBeSubmittedWithoutMeetingMinutes() {
+        Department department = department(1L);
+        AppUser applicant = user(42L, UserRole.OFFICE, department);
+        PurchaseApplication application = application(102L, department, PurchaseStatus.DRAFT, "50000.00");
+        application.setApplicant(applicant);
+        when(applicationRepository.findDetailById(102L)).thenReturn(Optional.of(application));
+
+        var response = service.submit(applicant, 102L);
+
+        assertEquals(PurchaseStatus.SUBMITTED, response.status());
+        verify(attachmentRepository, never()).existsByPurchaseApplicationIdAndAttachmentType(
+                102L, PurchaseAttachmentType.MEETING_MINUTES);
     }
 
     @Test

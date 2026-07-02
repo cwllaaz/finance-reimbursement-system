@@ -78,6 +78,7 @@ const selectedPurchase = ref(null)
 const purchaseAttachmentType = ref('OTHER')
 const assets = ref([])
 const eligibleAssetPurchases = ref([])
+const assetClaimants = ref([])
 const assetLoading = ref(false)
 const assetDetailVisible = ref(false)
 const acceptanceDialogVisible = ref(false)
@@ -139,7 +140,7 @@ api.interceptors.request.use((config) => {
 })
 
 const loginForm = reactive({ username: 'employee', password: '123456' })
-const searchForm = reactive({ keyword: '', status: '' })
+const searchForm = reactive({ keyword: '', status: '', expenseDateRange: [] })
 const pendingSearchForm = reactive({ keyword: '' })
 const userSearchForm = reactive({ keyword: '', role: '' })
 const operationLogSearchForm = reactive({ keyword: '', module: '', action: '' })
@@ -210,7 +211,7 @@ const acceptanceForm = reactive({
   storageLocation: '',
   remark: '',
 })
-const claimForm = reactive({ useLocation: '', remark: '' })
+const claimForm = reactive({ claimantUserId: null, useLocation: '', remark: '' })
 const laborSearchForm = reactive({ keyword: '', status: '' })
 const laborApprovalForm = reactive({ action: 'APPROVE', comment: '' })
 const laborPaymentForm = reactive({ paymentDate: '', paymentAmount: null, voucherNumber: '', comment: '' })
@@ -277,9 +278,13 @@ const attachmentTypeOptions = [
   { value: 'CONTRACT', label: '合同' },
   { value: 'MEETING_MINUTES', label: '会议审议材料' },
   { value: 'BANK_RECEIPT', label: '银行回执' },
-  { value: 'OTHER', label: '其他附件' },
+  { value: 'OTHER', label: '其他凭证' },
 ]
 const attachmentTypeLabels = Object.fromEntries(attachmentTypeOptions.map((item) => [item.value, item.label]))
+const otherCredentialTypes = ['CONTRACT', 'MEETING_MINUTES', 'BANK_RECEIPT', 'OTHER']
+const hasAttachmentType = (attachments, type) => (attachments || []).some((item) => item.attachmentType === type)
+const hasOtherCredential = (attachments) => (attachments || [])
+  .some((item) => otherCredentialTypes.includes(item.attachmentType))
 const purchaseStatusOptions = [
   { label: '草稿', value: 'DRAFT', type: 'info' },
   { label: '财务审核中', value: 'SUBMITTED', type: 'warning' },
@@ -468,6 +473,9 @@ const purchaseStatusMap = Object.fromEntries(purchaseStatusOptions.map(item => [
 const purchaseTotal = computed(() => purchaseForm.items.reduce(
   (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0,
 ))
+const isLargePurchase = (purchase) => Number(purchase?.amount || 0) > 50000
+const hasPurchaseMeetingMaterial = (purchase) => (purchase?.attachments || [])
+  .some((item) => item.attachmentType === 'MEETING_MINUTES')
 const laborTotal = computed(() => laborForm.recipients.reduce(
   (sum, item) => sum + Number(item.netAmount || 0), 0,
 ))
@@ -528,7 +536,10 @@ const menuItems = computed(() => {
   return items
 })
 const pageTitle = computed(() => menuItems.value.find((item) => item.index === activeMenu.value)?.label || '个人资料')
-const approvedCount = computed(() => reimbursements.value.filter((item) => ['COMPLETED', 'APPROVED'].includes(item.status)).length)
+const approvedCount = computed(() => {
+  const counts = dashboardStats.value.statusCounts || {}
+  return Number(counts.COMPLETED || 0) + Number(counts.APPROVED || 0)
+})
 const budgetUsedPercent = computed(() => {
   const list = dashboardStats.value.budgets || []
   const total = list.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0)
@@ -798,6 +809,7 @@ const handleLogout = async () => {
   pendingPurchases.value = []
   assets.value = []
   eligibleAssetPurchases.value = []
+  assetClaimants.value = []
   advances.value = []
   incomeRecords.value = []
   ledgerEntries.value = []
@@ -820,7 +832,7 @@ const refreshAll = async () => {
   if (canViewLedger.value) tasks.push(loadLedger())
   if (canManageIncome.value || canViewLedger.value) tasks.push(loadDepartments())
   tasks.push(loadAssets())
-  if (canAcceptAssets.value) tasks.push(loadEligibleAssetPurchases())
+  if (canAcceptAssets.value) tasks.push(loadEligibleAssetPurchases(), loadAssetClaimants())
   if (canViewAdvances.value) tasks.push(loadAdvances())
   await Promise.all(tasks)
   if (['myApplications', 'myTodos', 'doneItems'].includes(activeMenu.value)) {
@@ -857,7 +869,12 @@ const loadReimbursements = async () => {
   try {
     const params = {}
     if (searchForm.keyword) params.keyword = searchForm.keyword
-    if (searchForm.status) params.status = searchForm.status
+    if (searchForm.status === 'APPROVED_GROUP') params.statuses = 'COMPLETED,APPROVED'
+    else if (searchForm.status) params.status = searchForm.status
+    if (searchForm.expenseDateRange?.length === 2) {
+      params.dateFrom = searchForm.expenseDateRange[0]
+      params.dateTo = searchForm.expenseDateRange[1]
+    }
     reimbursements.value = (await api.get('/reimbursements', { params })).data
     backendOnline.value = true
   } catch (error) {
@@ -1313,13 +1330,37 @@ const submitForm = async () => {
   }
 }
 const submitReimbursement = async (row) => {
-  await ElMessageBox.confirm(`确定提交“${row.title}”进入审批吗？`, '提交确认', { type: 'info' })
   try {
+    const detail = (await api.get(`/reimbursements/${row.id}/detail`)).data
+    const attachments = detail.attachments || []
+    const missing = []
+    if (!hasAttachmentType(attachments, 'INVOICE')) missing.push('发票')
+    if (!hasOtherCredential(attachments)) missing.push('其他凭证')
+    if (missing.length) {
+      ElMessage.warning(`提交前请上传：${missing.join('、')}`)
+      return
+    }
+    await ElMessageBox.confirm(
+      `确定提交“${row.title}”进入审批吗？已检查发票和其他凭证。`,
+      '提交确认',
+      { type: 'info' },
+    )
     await api.post(`/reimbursements/${row.id}/submit`)
     ElMessage.success('提交成功，进入部门审批中')
     await refreshAll()
   } catch (error) {
-    ElMessage.error(error.response?.data?.message || '提交失败')
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '提交失败')
+  }
+}
+const loadAssetClaimants = async () => {
+  if (!token.value || !canAcceptAssets.value) {
+    assetClaimants.value = []
+    return
+  }
+  try {
+    assetClaimants.value = (await api.get('/assets/claimants')).data
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '读取资产领用人失败')
   }
 }
 const deleteReimbursement = async (row) => {
@@ -1633,7 +1674,54 @@ const submitProfile = async () => {
 const resetSearch = async () => {
   searchForm.keyword = ''
   searchForm.status = ''
+  searchForm.expenseDateRange = []
   await loadReimbursements()
+}
+const dashboardMonthRange = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const lastDay = String(new Date(year, now.getMonth() + 1, 0).getDate()).padStart(2, '0')
+  return [`${year}-${month}-01`, `${year}-${month}-${lastDay}`]
+}
+const openDashboardMetric = async (target) => {
+  if (!canViewDashboard.value) {
+    ElMessage.error('当前角色无权访问财务仪表盘')
+    return
+  }
+  if (target === 'todos') {
+    if (!menuItems.value.some((item) => item.index === 'myTodos')) {
+      ElMessage.error('当前角色无权访问待办事项')
+      return
+    }
+    Object.assign(workbenchSearchForm, { businessType: '', status: '', keyword: '' })
+    await changeMenu('myTodos')
+    return
+  }
+  if (['allReimbursements', 'monthReimbursements', 'approvedReimbursements'].includes(target)) {
+    if (!canViewReimbursements.value) {
+      ElMessage.error('当前角色无权访问报销管理')
+      return
+    }
+    Object.assign(searchForm, { keyword: '', status: '', expenseDateRange: [] })
+    if (target === 'monthReimbursements') searchForm.expenseDateRange = dashboardMonthRange()
+    if (target === 'approvedReimbursements') searchForm.status = 'APPROVED_GROUP'
+    await changeMenu('reimbursement')
+    return
+  }
+  if (target === 'pendingOffsets' || target === 'overdueAdvances') {
+    if (!canViewAdvances.value) {
+      ElMessage.error('当前角色无权访问借款管理')
+      return
+    }
+    Object.assign(advanceSearchForm, {
+      keyword: '',
+      type: '',
+      status: '',
+      settlementStatus: target === 'pendingOffsets' ? 'PENDING_GROUP' : 'OVERDUE',
+    })
+    await changeMenu('advances')
+  }
 }
 const resetPendingSearch = async () => {
   pendingSearchForm.keyword = ''
@@ -1714,13 +1802,18 @@ const savePurchase = async () => {
   }
 }
 const submitPurchase = async (row) => {
-  await ElMessageBox.confirm(`确定提交申购单“${row.applicationNumber}”吗？`, '提交确认', { type: 'info' })
   try {
+    const detail = (await api.get(`/purchases/${row.id}`)).data
+    if (isLargePurchase(detail) && !hasPurchaseMeetingMaterial(detail)) {
+      ElMessage.error('5万元以上申购必须上传院务委员会审议材料')
+      return
+    }
+    await ElMessageBox.confirm(`确定提交申购单“${row.applicationNumber}”吗？`, '提交确认', { type: 'info' })
     await api.post(`/purchases/${row.id}/submit`)
     ElMessage.success('申购单已提交财务审核')
     await Promise.all([loadPurchases(), loadPendingPurchases()])
   } catch (error) {
-    ElMessage.error(error.response?.data?.message || '提交失败')
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '提交失败')
   }
 }
 const deletePurchase = async (row) => {
@@ -1814,15 +1907,17 @@ const openAssetDetail = async row => {
     ElMessage.error(error.response?.data?.message || '读取资产详情失败')
   }
 }
-const openClaimDialog = row => {
+const openClaimDialog = async row => {
+  await loadAssetClaimants()
   selectedAsset.value = row
+  claimForm.claimantUserId = null
   claimForm.useLocation = row.location || ''
   claimForm.remark = ''
   claimDialogVisible.value = true
 }
 const submitAssetClaim = async () => {
-  if (!claimForm.useLocation.trim()) {
-    ElMessage.warning('请填写实际使用地点')
+  if (!claimForm.claimantUserId || !claimForm.useLocation.trim()) {
+    ElMessage.warning('请选择实际使用人并填写实际使用地点')
     return
   }
   saving.value = true
@@ -2054,7 +2149,14 @@ const loadAdvances = async () => {
   advanceLoading.value = true
   try {
     const params = {}
-    Object.entries(advanceSearchForm).forEach(([key, value]) => { if (value) params[key] = value })
+    if (advanceSearchForm.keyword) params.keyword = advanceSearchForm.keyword
+    if (advanceSearchForm.type) params.type = advanceSearchForm.type
+    if (advanceSearchForm.status) params.status = advanceSearchForm.status
+    if (advanceSearchForm.settlementStatus === 'PENDING_GROUP') {
+      params.settlementStatuses = 'PENDING_OFFSET,PARTIAL_OFFSET'
+    } else if (advanceSearchForm.settlementStatus) {
+      params.settlementStatus = advanceSearchForm.settlementStatus
+    }
     advances.value = (await api.get('/advances', { params })).data
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '读取资金申请失败')
@@ -2256,7 +2358,7 @@ const changeMenu = async (menu) => {
   if (menu === 'users') await Promise.all([loadUsers(), loadDepartments()])
   if (menu === 'operationLogs') await loadOperationLogs()
   if (menu === 'purchases') await Promise.all([loadPurchases(), loadPendingPurchases()])
-  if (menu === 'assets') await Promise.all([loadAssets(), loadEligibleAssetPurchases()])
+  if (menu === 'assets') await Promise.all([loadAssets(), loadEligibleAssetPurchases(), loadAssetClaimants()])
   if (menu === 'labor') await loadLaborApplications()
   if (menu === 'advances') await loadAdvances()
   if (menu === 'incomes') await Promise.all([loadIncomes(), loadDepartments()])
@@ -2344,32 +2446,32 @@ onBeforeUnmount(() => {
       <el-main class="content">
         <section v-if="canViewDashboard && (activeMenu === 'dashboard' || activeMenu === 'report')" class="dashboard">
           <div class="metric-grid">
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="查看全部报销单" @click="openDashboardMetric('allReimbursements')" @keydown.enter.space.prevent="openDashboardMetric('allReimbursements')">
               <div class="metric-icon blue"><el-icon><Document /></el-icon></div>
               <span>报销单总数</span>
               <strong>{{ dashboardStats.reimbursementCount }}</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="查看本月报销单" @click="openDashboardMetric('monthReimbursements')" @keydown.enter.space.prevent="openDashboardMetric('monthReimbursements')">
               <div class="metric-icon orange"><el-icon><Money /></el-icon></div>
               <span>本月报销金额</span>
               <strong>{{ formatMoney(dashboardStats.monthAmount) }}</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="查看已通过或已完成报销单" @click="openDashboardMetric('approvedReimbursements')" @keydown.enter.space.prevent="openDashboardMetric('approvedReimbursements')">
               <div class="metric-icon green"><el-icon><Finished /></el-icon></div>
               <span>已通过</span>
               <strong>{{ approvedCount }}</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="打开我的待办" @click="openDashboardMetric('todos')" @keydown.enter.space.prevent="openDashboardMetric('todos')">
               <div class="metric-icon red"><el-icon><Tickets /></el-icon></div>
               <span>待审批</span>
               <strong>{{ dashboardStats.pendingCount }}</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="查看待还款或待冲账资金单" @click="openDashboardMetric('pendingOffsets')" @keydown.enter.space.prevent="openDashboardMetric('pendingOffsets')">
               <div class="metric-icon orange"><el-icon><Wallet /></el-icon></div>
               <span>待还款 / 冲账</span>
               <strong>{{ dashboardStats.pendingOffsetCount || 0 }}</strong>
             </div>
-            <div class="metric-card">
+            <div class="metric-card is-clickable" role="button" tabindex="0" title="查看逾期资金单" @click="openDashboardMetric('overdueAdvances')" @keydown.enter.space.prevent="openDashboardMetric('overdueAdvances')">
               <div class="metric-icon red"><el-icon><Refresh /></el-icon></div>
               <span>逾期资金单</span>
               <strong>{{ dashboardStats.overdueAdvanceCount || 0 }}</strong>
@@ -2462,8 +2564,19 @@ onBeforeUnmount(() => {
               </el-form-item>
               <el-form-item label="状态">
                 <el-select v-model="searchForm.status" clearable placeholder="全部状态" class="status-select">
+                  <el-option label="已通过/已完成" value="APPROVED_GROUP" />
                   <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
                 </el-select>
+              </el-form-item>
+              <el-form-item label="发生日期">
+                <el-date-picker
+                  v-model="searchForm.expenseDateRange"
+                  type="daterange"
+                  value-format="YYYY-MM-DD"
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                />
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" :icon="Search" @click="loadReimbursements">查询</el-button>
@@ -2602,7 +2715,7 @@ onBeforeUnmount(() => {
             <el-table-column label="操作" width="155" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openAssetDetail(row)">详情</el-button>
-                <el-button link type="success" :disabled="row.status !== 'IN_STOCK'" @click="openClaimDialog(row)">领用</el-button>
+                <el-button v-if="canAcceptAssets" link type="success" :disabled="row.status !== 'IN_STOCK'" @click="openClaimDialog(row)">办理领用</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -2666,7 +2779,7 @@ onBeforeUnmount(() => {
             <el-form :inline="true" :model="advanceSearchForm" class="search-form">
               <el-form-item label="关键词"><el-input v-model="advanceSearchForm.keyword" clearable placeholder="编号、理由或收款人" :prefix-icon="Search" @keyup.enter="loadAdvances" /></el-form-item>
               <el-form-item label="类型"><el-select v-model="advanceSearchForm.type" clearable placeholder="全部类型" class="status-select"><el-option v-for="item in advanceTypes" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
-              <el-form-item label="冲账状态"><el-select v-model="advanceSearchForm.settlementStatus" clearable placeholder="全部状态" class="status-select"><el-option v-for="item in settlementStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+              <el-form-item label="冲账状态"><el-select v-model="advanceSearchForm.settlementStatus" clearable placeholder="全部状态" class="status-select"><el-option label="待还款/冲账（含部分冲账）" value="PENDING_GROUP" /><el-option v-for="item in settlementStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
               <el-form-item><el-button type="primary" :icon="Search" @click="loadAdvances">查询</el-button><el-button @click="Object.assign(advanceSearchForm, { keyword: '', type: '', status: '', settlementStatus: '' }); loadAdvances()">重置</el-button></el-form-item>
             </el-form>
           </div>
@@ -2990,6 +3103,12 @@ onBeforeUnmount(() => {
             <el-input v-model="form.highValueExplanation" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="金额超过 5 万元时必填，保存后还需上传会议审议材料方可提交" />
           </el-form-item>
         </div>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="可先保存草稿；提交审批前必须进入详情，分别上传至少 1 份发票和 1 份其他凭证。"
+        />
         <el-alert v-if="isHighValueForm" type="warning" :closable="false" show-icon title="该报销金额超过 5 万元，提交前必须填写大额报销说明并上传会议审议材料。" />
       </el-form>
       <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitForm">保存</el-button></template>
@@ -3028,7 +3147,13 @@ onBeforeUnmount(() => {
         <div class="purchase-total-bar">
           <span>申购总金额</span><strong>{{ formatMoney(purchaseTotal) }}</strong>
         </div>
-        <el-alert v-if="purchaseTotal > 50000" type="warning" :closable="false" show-icon title="金额超过 5 万元，保存后必须在详情中上传“院务委员会审议材料”才能提交。" />
+        <el-alert
+          v-if="purchaseTotal > 50000"
+          type="error"
+          :closable="false"
+          show-icon
+          title="必填：5万元以上申购必须上传院务委员会审议材料。请先保存草稿，再到详情中上传。"
+        />
       </el-form>
       <template #footer><el-button @click="purchaseDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="savePurchase">保存申购单</el-button></template>
     </el-dialog>
@@ -3046,6 +3171,20 @@ onBeforeUnmount(() => {
           <el-descriptions-item label="是否免税">{{ selectedPurchase.taxExempt ? '是' : '否' }}</el-descriptions-item>
           <el-descriptions-item label="使用地点">{{ selectedPurchase.useLocation || '-' }}</el-descriptions-item>
           <el-descriptions-item label="资产验收单">{{ selectedPurchase.assetAcceptanceNumber || '尚未关联' }}</el-descriptions-item>
+          <el-descriptions-item label="大额申购">
+            <el-tag :type="isLargePurchase(selectedPurchase) ? 'danger' : 'info'">
+              {{ isLargePurchase(selectedPurchase) ? '是（大于5万元）' : '否' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="审议材料">
+            <el-tag
+              :type="!isLargePurchase(selectedPurchase) || hasPurchaseMeetingMaterial(selectedPurchase) ? 'success' : 'danger'"
+            >
+              {{ !isLargePurchase(selectedPurchase)
+                ? '无需上传'
+                : hasPurchaseMeetingMaterial(selectedPurchase) ? '已上传' : '必填但缺失' }}
+            </el-tag>
+          </el-descriptions-item>
           <el-descriptions-item label="购置理由" :span="2">{{ selectedPurchase.purchaseReason }}</el-descriptions-item>
         </el-descriptions>
         <section class="detail-section">
@@ -3071,6 +3210,15 @@ onBeforeUnmount(() => {
               </el-upload>
             </div>
           </div>
+          <el-alert
+            v-if="isLargePurchase(selectedPurchase)"
+            :title="hasPurchaseMeetingMaterial(selectedPurchase)
+              ? '大额申购材料已上传，可以提交审批。'
+              : '5万元以上申购必须上传院务委员会审议材料'"
+            :type="hasPurchaseMeetingMaterial(selectedPurchase) ? 'success' : 'error'"
+            :closable="false"
+            show-icon
+          />
           <el-table :data="selectedPurchase.attachments" border empty-text="暂无附件">
             <el-table-column label="类型" width="170"><template #default="{ row }">{{ purchaseAttachmentTypeLabels[row.attachmentType] || row.attachmentType }}</template></el-table-column>
             <el-table-column prop="fileName" label="文件名" min-width="220" />
@@ -3380,6 +3528,9 @@ onBeforeUnmount(() => {
     <el-dialog v-model="acceptanceDialogVisible" title="办理资产验收入库" width="620px">
       <el-alert type="info" :closable="false" show-icon title="仅显示已完成审批且尚未验收的申购单；提交后将按申购明细自动生成资产台账。" />
       <el-form label-width="100px" class="asset-action-form">
+        <el-form-item label="验收人">
+          <el-input :model-value="`${currentUser?.realName || '-'}（办公室，系统自动记录）`" disabled />
+        </el-form-item>
         <el-form-item label="关联申购单" required>
           <el-select v-model="acceptanceForm.purchaseApplicationId" filterable class="full-width" placeholder="请选择已审批申购单">
             <el-option
@@ -3400,9 +3551,21 @@ onBeforeUnmount(() => {
     </el-dialog>
 
     <el-dialog v-model="claimDialogVisible" title="领用资产" width="520px">
+      <el-alert type="info" :closable="false" show-icon title="由办公室办理领用，请选择资产的实际使用人；领用人不能与验收人相同。" />
       <el-form label-width="92px">
         <el-form-item label="资产编号"><el-input :model-value="selectedAsset?.assetNumber" disabled /></el-form-item>
         <el-form-item label="物品名称"><el-input :model-value="selectedAsset?.itemName" disabled /></el-form-item>
+        <el-form-item label="验收人"><el-input :model-value="selectedAsset?.acceptedByName || '旧数据未记录'" disabled /></el-form-item>
+        <el-form-item label="实际使用人" required>
+          <el-select v-model="claimForm.claimantUserId" filterable class="full-width" placeholder="请选择领用人/实际使用人">
+            <el-option
+              v-for="user in assetClaimants.filter(item => item.id !== selectedAsset?.acceptedById)"
+              :key="user.id"
+              :label="`${user.realName} · ${user.departmentName || '未分配部门'} · ${user.username}`"
+              :value="user.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="使用地点" required><el-input v-model="claimForm.useLocation" maxlength="200" placeholder="填写资产实际使用地点" /></el-form-item>
         <el-form-item label="领用说明"><el-input v-model="claimForm.remark" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
       </el-form>
@@ -3419,7 +3582,10 @@ onBeforeUnmount(() => {
           <el-descriptions-item label="厂商">{{ selectedAsset.manufacturer || '-' }}</el-descriptions-item>
           <el-descriptions-item label="数量">{{ selectedAsset.quantity }}</el-descriptions-item>
           <el-descriptions-item label="资产总价">{{ formatMoney(selectedAsset.totalPrice) }}</el-descriptions-item>
-          <el-descriptions-item label="接收时间">{{ formatDateTime(selectedAsset.receivedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="验收时间">{{ formatDateTime(selectedAsset.acceptedAt || selectedAsset.receivedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="验收人">{{ selectedAsset.acceptedByName || '旧数据未记录' }}</el-descriptions-item>
+          <el-descriptions-item label="领用时间">{{ formatDateTime(selectedAsset.claimedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="领用人/实际使用人">{{ selectedAsset.claimantName || '尚未领用或旧数据未记录' }}</el-descriptions-item>
           <el-descriptions-item label="当前保管人">{{ selectedAsset.custodianName || '办公室库存' }}</el-descriptions-item>
           <el-descriptions-item label="当前位置">{{ selectedAsset.location }}</el-descriptions-item>
           <el-descriptions-item label="关联申购单">{{ selectedAsset.purchaseApplicationNumber }}</el-descriptions-item>
@@ -3436,7 +3602,8 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="timeline-meta">
                   <span>操作人：{{ record.operatorName }}</span>
-                  <span v-if="record.custodianName">保管人：{{ record.custodianName }}</span>
+                  <span v-if="record.actualUserName">实际使用人：{{ record.actualUserName }}</span>
+                  <span v-if="record.custodianName">当时保管人：{{ record.custodianName }}</span>
                   <span v-if="record.receiptNumber">领用单号：{{ record.receiptNumber }}</span>
                   <span>地点：{{ record.location || '-' }}</span>
                 </div>
@@ -3503,7 +3670,7 @@ onBeforeUnmount(() => {
 
         <section class="detail-section">
           <div class="section-header">
-            <div><h2>凭证附件</h2><p>附件可分类归档；只有“发票”类型会进入 OCR 识别。</p></div>
+            <div><h2>凭证附件</h2><p>提交审批前必须上传发票和其他凭证；只有“发票”类型会进入 OCR 识别。</p></div>
             <div v-if="canUploadRow(detailData.reimbursement)" class="attachment-actions">
               <el-select v-model="attachmentType" class="attachment-type-select">
                 <el-option
@@ -3517,6 +3684,20 @@ onBeforeUnmount(() => {
                 <el-button type="primary" :icon="UploadFilled">上传附件</el-button>
               </el-upload>
             </div>
+          </div>
+          <el-alert
+            title="必传要求：至少 1 份发票，并至少上传 1 份合同、会议记录、付款凭证或其他证明材料。"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
+          <div class="required-attachment-status">
+            <el-tag :type="hasAttachmentType(detailData.attachments, 'INVOICE') ? 'success' : 'danger'">
+              发票必传：{{ hasAttachmentType(detailData.attachments, 'INVOICE') ? '已上传' : '缺失' }}
+            </el-tag>
+            <el-tag :type="hasOtherCredential(detailData.attachments) ? 'success' : 'danger'">
+              其他凭证必传：{{ hasOtherCredential(detailData.attachments) ? '已上传' : '缺失' }}
+            </el-tag>
           </div>
           <el-table :data="detailData.attachments" border empty-text="暂无附件">
             <el-table-column label="附件类型" width="130"><template #default="{ row }">{{ attachmentTypeLabels[row.attachmentType] || '其他附件' }}</template></el-table-column>

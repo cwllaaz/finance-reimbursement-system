@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS asset_acceptance (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   acceptance_number VARCHAR(30) NOT NULL UNIQUE,
   purchase_application_id BIGINT NOT NULL UNIQUE,
-  accepted_by BIGINT NOT NULL,
+  accepted_by BIGINT,
   received_at DATETIME NOT NULL,
   storage_location VARCHAR(200) NOT NULL,
   remark VARCHAR(500),
@@ -233,11 +233,14 @@ CREATE TABLE IF NOT EXISTS asset (
   location VARCHAR(200) NOT NULL,
   status VARCHAR(40) NOT NULL,
   custodian_id BIGINT,
+  claimed_by BIGINT,
+  claimed_at DATETIME,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   CONSTRAINT fk_asset_acceptance FOREIGN KEY (acceptance_id) REFERENCES asset_acceptance(id),
   CONSTRAINT fk_asset_purchase_item FOREIGN KEY (purchase_item_id) REFERENCES purchase_item(id),
-  CONSTRAINT fk_asset_custodian FOREIGN KEY (custodian_id) REFERENCES `user`(id)
+  CONSTRAINT fk_asset_custodian FOREIGN KEY (custodian_id) REFERENCES `user`(id),
+  CONSTRAINT fk_asset_claimed_by FOREIGN KEY (claimed_by) REFERENCES `user`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS asset_history (

@@ -106,14 +106,29 @@ public class ReimbursementService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReimbursementResponse> list(AppUser currentUser, String keyword, ReimbursementStatus status) {
+    public List<ReimbursementResponse> list(
+            AppUser currentUser,
+            String keyword,
+            ReimbursementStatus status,
+            List<ReimbursementStatus> statuses,
+            LocalDate dateFrom,
+            LocalDate dateTo
+    ) {
         if (!canAccessReimbursements(currentUser)) {
             throw new ForbiddenException("no permission to access reimbursements");
+        }
+        if (dateFrom != null && dateTo != null && dateFrom.isAfter(dateTo)) {
+            throw new BusinessException("开始日期不能晚于结束日期");
         }
         String normalizedKeyword = StringUtils.hasText(keyword) ? keyword.trim() : null;
         return reimbursementRepository.search(normalizedKeyword, status)
                 .stream()
                 .filter(item -> canView(currentUser, item))
+                .filter(item -> statuses == null || statuses.isEmpty() || statuses.contains(item.getStatus()))
+                .filter(item -> dateFrom == null
+                        || (item.getExpenseDate() != null && !item.getExpenseDate().isBefore(dateFrom)))
+                .filter(item -> dateTo == null
+                        || (item.getExpenseDate() != null && !item.getExpenseDate().isAfter(dateTo)))
                 .map(ReimbursementResponse::fromEntity)
                 .toList();
     }
@@ -668,6 +683,25 @@ public class ReimbursementService {
     }
 
     private void validateSubmissionMaterials(Reimbursement reimbursement) {
+        Long reimbursementId = reimbursement.getId();
+        if (!attachmentRepository.existsByReimbursementIdAndAttachmentType(
+                reimbursementId,
+                AttachmentType.INVOICE
+        )) {
+            throw new BusinessException("提交报销单前必须至少上传 1 份发票");
+        }
+        if (!attachmentRepository.existsByReimbursementIdAndAttachmentTypeIn(
+                reimbursementId,
+                List.of(
+                        AttachmentType.CONTRACT,
+                        AttachmentType.MEETING_MINUTES,
+                        AttachmentType.BANK_RECEIPT,
+                        AttachmentType.OTHER
+                )
+        )) {
+            throw new BusinessException("提交报销单前必须至少上传 1 份其他凭证（合同、会议记录、付款凭证或其他证明材料）");
+        }
+
         if (reimbursement.getAmount() == null
                 || reimbursement.getAmount().compareTo(HIGH_VALUE_THRESHOLD) <= 0) {
             return;

@@ -53,7 +53,7 @@ class AdvanceApplicationServiceTests {
         AppUser office = user(6L, UserRole.OFFICE);
 
         assertThrows(ForbiddenException.class,
-                () -> service.list(office, null, null, null, null));
+                () -> service.list(office, null, null, null, null, null));
         assertThrows(ForbiddenException.class,
                 () -> service.create(office, request(AdvanceType.TEMPORARY_LOAN)));
         verify(applicationRepository, never()).findAllDetails();
@@ -137,6 +137,33 @@ class AdvanceApplicationServiceTests {
 
         assertEquals(2, stats.pendingOffsetCount());
         assertEquals(0, stats.overdueAdvanceCount());
+    }
+
+    @Test
+    void pendingOffsetFilterIncludesPendingAndPartialOnly() {
+        AdvanceApplication pending = application(AdvanceStatus.COMPLETED);
+        pending.setSettlementStatus(SettlementStatus.PENDING_OFFSET);
+        AdvanceApplication partial = application(AdvanceStatus.COMPLETED);
+        ReflectionTestUtils.setField(partial, "id", 11L);
+        partial.setSettlementStatus(SettlementStatus.PARTIAL_OFFSET);
+        AdvanceApplication completed = application(AdvanceStatus.COMPLETED);
+        ReflectionTestUtils.setField(completed, "id", 12L);
+        completed.setSettlementStatus(SettlementStatus.OFFSET_COMPLETED);
+        when(applicationRepository.findAllDetails()).thenReturn(List.of(pending, partial, completed));
+
+        var result = service.list(
+                user(2L, UserRole.FINANCE),
+                null,
+                null,
+                null,
+                null,
+                List.of(SettlementStatus.PENDING_OFFSET, SettlementStatus.PARTIAL_OFFSET)
+        );
+
+        assertEquals(2, result.size());
+        assertTrue(result.stream().allMatch(item ->
+                item.settlementStatus() == SettlementStatus.PENDING_OFFSET
+                        || item.settlementStatus() == SettlementStatus.PARTIAL_OFFSET));
     }
 
     @Test

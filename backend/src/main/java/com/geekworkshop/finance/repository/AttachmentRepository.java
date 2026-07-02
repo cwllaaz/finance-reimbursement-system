@@ -16,4 +16,9 @@ public interface AttachmentRepository extends JpaRepository<Attachment, Long> {
     );
 
     boolean existsByReimbursementIdAndAttachmentType(Long reimbursementId, AttachmentType attachmentType);
+
+    boolean existsByReimbursementIdAndAttachmentTypeIn(
+            Long reimbursementId,
+            List<AttachmentType> attachmentTypes
+    );
 }

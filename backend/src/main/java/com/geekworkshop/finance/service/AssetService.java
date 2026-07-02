@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -19,6 +20,7 @@ public class AssetService {
     private final AssetAcceptanceRepository acceptanceRepository;
     private final AssetHistoryRepository historyRepository;
     private final PurchaseApplicationRepository purchaseRepository;
+    private final AppUserRepository appUserRepository;
     private final OperationLogService operationLogService;
 
     public AssetService(
@@ -26,12 +28,14 @@ public class AssetService {
             AssetAcceptanceRepository acceptanceRepository,
             AssetHistoryRepository historyRepository,
             PurchaseApplicationRepository purchaseRepository,
+            AppUserRepository appUserRepository,
             OperationLogService operationLogService
     ) {
         this.assetRepository = assetRepository;
         this.acceptanceRepository = acceptanceRepository;
         this.historyRepository = historyRepository;
         this.purchaseRepository = purchaseRepository;
+        this.appUserRepository = appUserRepository;
         this.operationLogService = operationLogService;
     }
 
@@ -65,6 +69,15 @@ public class AssetService {
                 .filter(purchase -> purchase.getStatus() == PurchaseStatus.COMPLETED)
                 .filter(purchase -> !acceptanceRepository.existsByPurchaseApplicationId(purchase.getId()))
                 .map(purchase -> PurchaseApplicationResponse.fromEntity(purchase, List.of(), List.of()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<AssetUserOptionResponse> claimantOptions(AppUser user) {
+        requireOffice(user);
+        return appUserRepository.findAllWithDepartment().stream()
+                .filter(candidate -> Boolean.TRUE.equals(candidate.getEnabled()))
+                .map(AssetUserOptionResponse::fromEntity)
                 .toList();
     }
 
@@ -113,25 +126,44 @@ public class AssetService {
         operationLogService.record(user, "资产管理", "验收入库", acceptance.getId(),
                 acceptance.getAcceptanceNumber(), "关联申购单 " + purchase.getApplicationNumber()
                         + "，生成资产 " + assets.size() + " 项");
-        return new AssetAcceptanceResponse(acceptance.getAcceptanceNumber(), purchase.getApplicationNumber(),
+        return new AssetAcceptanceResponse(
+                acceptance.getAcceptanceNumber(),
+                purchase.getApplicationNumber(),
+                user.getId(),
+                user.getRealName(),
+                acceptance.getReceivedAt(),
                 assets.stream().map(asset -> AssetResponse.fromEntity(asset, List.of())).toList());
     }
 
     @Transactional
     public AssetResponse claim(AppUser user, Long id, AssetClaimRequest request) {
+        requireOffice(user);
         Asset asset = requireAsset(id);
         if (asset.getStatus() != AssetStatus.IN_STOCK) {
             throw new BusinessException("只有库存中的资产可以领用");
         }
+        AppUser claimant = appUserRepository.findWithDepartmentById(request.getClaimantUserId())
+                .orElseThrow(() -> new BusinessException("领用人不存在"));
+        if (!Boolean.TRUE.equals(claimant.getEnabled())) {
+            throw new BusinessException("不能选择已禁用的用户作为领用人");
+        }
+        AppUser acceptor = asset.getAcceptance().getAcceptedBy();
+        if (acceptor != null && acceptor.getId().equals(claimant.getId())) {
+            throw new BusinessException("领用人必须是实际资产使用者，不能与验收人相同");
+        }
         String receiptNumber = nextReceiptNumber();
-        asset.setCustodian(user);
+        LocalDateTime claimedAt = LocalDateTime.now();
+        asset.setClaimedBy(claimant);
+        asset.setClaimedAt(claimedAt);
+        asset.setCustodian(claimant);
         asset.setLocation(request.getUseLocation().trim());
         asset.setStatus(AssetStatus.IN_USE);
         assetRepository.save(asset);
-        saveHistory(asset, user, user, receiptNumber, AssetHistoryAction.CLAIMED,
-                "使用人领用" + optionalRemark(request.getRemark()));
+        saveHistory(asset, user, claimant, receiptNumber, AssetHistoryAction.CLAIMED,
+                "办公室办理领用，实际使用人：" + claimant.getRealName() + optionalRemark(request.getRemark()));
         operationLogService.record(user, "资产管理", "领用资产", asset.getId(), asset.getAssetNumber(),
-                "领用单号 " + receiptNumber + "，使用地点：" + asset.getLocation());
+                "领用单号 " + receiptNumber + "，实际使用人：" + claimant.getRealName()
+                        + "，使用地点：" + asset.getLocation());
         return detail(user, id);
     }
 

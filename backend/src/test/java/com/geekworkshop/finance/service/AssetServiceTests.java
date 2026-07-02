@@ -28,6 +28,7 @@ class AssetServiceTests {
     @Mock AssetAcceptanceRepository acceptanceRepository;
     @Mock AssetHistoryRepository historyRepository;
     @Mock PurchaseApplicationRepository purchaseRepository;
+    @Mock AppUserRepository appUserRepository;
     @Mock OperationLogService operationLogService;
 
     private AssetService service;
@@ -35,7 +36,7 @@ class AssetServiceTests {
     @BeforeEach
     void setUp() {
         service = new AssetService(assetRepository, acceptanceRepository, historyRepository,
-                purchaseRepository, operationLogService);
+                purchaseRepository, appUserRepository, operationLogService);
         lenient().when(assetRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(acceptanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(purchaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -67,6 +68,8 @@ class AssetServiceTests {
         assertEquals(1, response.assets().size());
         assertTrue(response.assets().getFirst().assetNumber().startsWith("ZC"));
         assertEquals(AssetStatus.IN_STOCK, response.assets().getFirst().status());
+        assertEquals(office.getId(), response.acceptedById());
+        assertEquals(office.getRealName(), response.acceptedByName());
         verify(historyRepository).save(any(AssetHistory.class));
     }
 
@@ -81,34 +84,69 @@ class AssetServiceTests {
     }
 
     @Test
-    void actualUserClaimGeneratesReceiptAndUpdatesCustodian() {
+    void officeSelectsActualUserAndClaimGeneratesReceipt() {
+        AppUser office = user(2L, UserRole.OFFICE);
         AppUser employee = user(3L, UserRole.EMPLOYEE);
         Asset asset = asset(20L, AssetStatus.IN_STOCK);
         when(assetRepository.findDetailById(20L)).thenReturn(Optional.of(asset));
+        when(appUserRepository.findWithDepartmentById(3L)).thenReturn(Optional.of(employee));
         when(historyRepository.findTopByReceiptNumberStartingWithOrderByReceiptNumberDesc(any()))
                 .thenReturn(Optional.empty());
         AssetClaimRequest request = new AssetClaimRequest();
+        request.setClaimantUserId(3L);
         request.setUseLocation("科研楼 301");
         request.setRemark("项目使用");
 
-        var response = service.claim(employee, 20L, request);
+        var response = service.claim(office, 20L, request);
 
         assertEquals(AssetStatus.IN_USE, response.status());
         assertEquals(employee.getId(), response.custodianId());
+        assertEquals(employee.getId(), response.claimantId());
+        assertNotNull(response.claimedAt());
         assertEquals("科研楼 301", response.location());
         verify(historyRepository).save(argThat(history ->
                 history.getReceiptNumber().startsWith("LY")
-                        && history.getAction() == AssetHistoryAction.CLAIMED));
+                        && history.getAction() == AssetHistoryAction.CLAIMED
+                        && history.getOperator().getId().equals(office.getId())
+                        && history.getCustodian().getId().equals(employee.getId())));
+    }
+
+    @Test
+    void employeeCannotDirectlyAssignAssetClaimant() {
+        AssetClaimRequest request = new AssetClaimRequest();
+        request.setClaimantUserId(3L);
+        request.setUseLocation("科研楼 301");
+
+        assertThrows(ForbiddenException.class,
+                () -> service.claim(user(3L, UserRole.EMPLOYEE), 20L, request));
+    }
+
+    @Test
+    void claimantCannotBeTheAcceptanceOperator() {
+        AppUser office = user(2L, UserRole.OFFICE);
+        Asset asset = asset(20L, AssetStatus.IN_STOCK);
+        when(assetRepository.findDetailById(20L)).thenReturn(Optional.of(asset));
+        when(appUserRepository.findWithDepartmentById(2L)).thenReturn(Optional.of(office));
+        AssetClaimRequest request = new AssetClaimRequest();
+        request.setClaimantUserId(2L);
+        request.setUseLocation("办公室");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.claim(office, 20L, request));
+
+        assertTrue(exception.getMessage().contains("不能与验收人相同"));
     }
 
     @Test
     void assetAlreadyInUseCannotBeClaimedAgain() {
+        AppUser office = user(2L, UserRole.OFFICE);
         Asset asset = asset(20L, AssetStatus.IN_USE);
         when(assetRepository.findDetailById(20L)).thenReturn(Optional.of(asset));
         AssetClaimRequest request = new AssetClaimRequest();
+        request.setClaimantUserId(3L);
         request.setUseLocation("科研楼 301");
 
-        assertThrows(BusinessException.class, () -> service.claim(user(3L, UserRole.EMPLOYEE), 20L, request));
+        assertThrows(BusinessException.class, () -> service.claim(office, 20L, request));
     }
 
     private AssetAcceptanceRequest acceptanceRequest() {

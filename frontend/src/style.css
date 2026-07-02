@@ -255,6 +255,26 @@ body {
   border-radius: 8px;
 }
 
+.metric-card.is-clickable {
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.metric-card.is-clickable:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 10%);
+  transform: translateY(-2px);
+}
+
+.metric-card.is-clickable:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 22%);
+  outline-offset: 2px;
+}
+
+.metric-card.is-clickable:active {
+  transform: translateY(0);
+}
+
 .metric-card span {
   color: #667085;
   font-size: 13px;
@@ -418,6 +438,12 @@ body {
 
 .attachment-type-select {
   width: 150px;
+}
+
+.required-attachment-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .detail-section {

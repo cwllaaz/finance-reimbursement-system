@@ -65,7 +65,7 @@ public class AuthService {
         if (session == null) {
             throw new BusinessException("login status has expired");
         }
-        if (session.expiresAt().isBefore(Instant.now())) {
+        if (!session.expiresAt().isAfter(Instant.now())) {
             tokenStore.remove(token);
             throw new BusinessException("login status has expired");
         }

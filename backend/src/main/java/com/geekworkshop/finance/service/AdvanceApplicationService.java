@@ -41,7 +41,12 @@ public class AdvanceApplicationService {
 
     @Transactional
     public List<AdvanceApplicationResponse> list(
-            AppUser user, String keyword, AdvanceType type, AdvanceStatus status, SettlementStatus settlementStatus
+            AppUser user,
+            String keyword,
+            AdvanceType type,
+            AdvanceStatus status,
+            SettlementStatus settlementStatus,
+            List<SettlementStatus> settlementStatuses
     ) {
         requireModuleAccess(user);
         refreshOverdueStatuses();
@@ -51,6 +56,8 @@ public class AdvanceApplicationService {
                 .filter(value -> type == null || value.getType() == type)
                 .filter(value -> status == null || value.getStatus() == status)
                 .filter(value -> settlementStatus == null || value.getSettlementStatus() == settlementStatus)
+                .filter(value -> settlementStatuses == null || settlementStatuses.isEmpty()
+                        || settlementStatuses.contains(value.getSettlementStatus()))
                 .filter(value -> normalized == null
                         || value.getApplicationNumber().toLowerCase().contains(normalized)
                         || value.getReason().toLowerCase().contains(normalized)
