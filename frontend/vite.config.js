@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const apiTarget = env.VITE_API_TARGET || 'http://localhost:8080'
 
   return {
     base: env.VITE_PUBLIC_BASE || '/',
@@ -11,11 +12,11 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/api': {
-          target: 'http://localhost:8080',
+          target: apiTarget,
           changeOrigin: true,
         },
         '/uploads': {
-          target: 'http://localhost:8080',
+          target: apiTarget,
           changeOrigin: true,
         },
       },

@@ -55,6 +55,7 @@ const userLoading = ref(false)
 const operationLogLoading = ref(false)
 const timelineLoading = ref(false)
 const workbenchLoading = ref(false)
+const dashboardTodoLoading = ref(false)
 const exportLoading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
@@ -145,6 +146,9 @@ const listErrors = reactive({
 const myApplicationItems = ref([])
 const myTodoItems = ref([])
 const doneItems = ref([])
+const dashboardTodoItems = ref([])
+const dashboardTodoTotal = ref(0)
+const dashboardTodoError = ref('')
 const dashboardLoading = ref(false)
 const dashboardError = ref('')
 const rowActionLoading = ref('')
@@ -552,8 +556,29 @@ const menuDefinitions = [
   { index: 'operationLogs', label: '操作日志', icon: Document },
   { index: 'profile', label: '个人资料', icon: User },
 ]
+const menuGroupDefinitions = [
+  { key: 'workspace', label: '工作台', items: ['dashboard', 'myApplications', 'myTodos', 'doneItems'] },
+  { key: 'applications', label: '申请业务', items: ['reimbursement', 'purchases', 'labor', 'advances'] },
+  { key: 'assets', label: '资产管理', items: ['assets'] },
+  { key: 'finance', label: '财务处理', items: ['approval', 'paymentTasks', 'incomes', 'ledger'] },
+  { key: 'budget', label: '预算统计', items: ['budget', 'report'] },
+  { key: 'system', label: '系统管理', items: ['users', 'operationLogs', 'profile'] },
+]
 const menuItems = computed(() => menuDefinitions
   .filter((item) => canAccessMenu(currentUser.value?.role, item.index)))
+const menuGroups = computed(() => menuGroupDefinitions
+  .map((group) => ({
+    ...group,
+    items: group.items
+      .map((index) => menuDefinitions.find((item) => item.index === index))
+      .filter((item) => item && canAccessMenu(currentUser.value?.role, item.index)),
+  }))
+  .filter((group) => group.items.length))
+const menuBadgeValue = (menu) => {
+  if (menu === 'myTodos') return dashboardTodoTotal.value
+  if (menu === 'paymentTasks') return paymentTasks.value.length
+  return 0
+}
 const pageTitle = computed(() => menuItems.value.find((item) => item.index === activeMenu.value)?.label || '个人资料')
 const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -669,6 +694,94 @@ const toWorkflowItem = (type, item, source = item) => ({
   date: workflowDate(item),
   source,
 })
+const dashboardRecentItems = computed(() => [
+  ...reimbursements.value.map(item => toWorkflowItem('报销', item)),
+  ...purchases.value.map(item => toWorkflowItem('申购', item)),
+  ...laborApplications.value.map(item => toWorkflowItem('劳务', item)),
+  ...advances.value.map(item => toWorkflowItem('借款', item)),
+].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 5))
+
+const mapWorkbenchResponse = (items) => items.map(item => ({
+  key: `${item.businessType}-${item.businessId}`,
+  type: workbenchTypeLabels[item.businessType] || item.businessType,
+  businessType: item.businessType,
+  id: item.businessId,
+  number: item.number || `#${item.businessId}`,
+  title: item.title,
+  applicantName: item.applicantName,
+  departmentName: item.departmentName,
+  amount: item.amount,
+  status: item.status,
+  date: formatDateTime(item.time),
+  rawTime: item.time,
+  source: { id: item.businessId },
+}))
+
+const todoNodeLabels = {
+  REIMBURSEMENT: {
+    SUBMITTED: '财务初审',
+    FINANCE_INITIAL_APPROVED: '部门负责人审批',
+    DEPARTMENT_APPROVED: '执行院长审批',
+    EXECUTIVE_APPROVED: '出纳付款',
+    PAID: '财务复核',
+  },
+  PURCHASE: {
+    SUBMITTED: '财务审核',
+    FINANCE_APPROVED: '部门负责人审批',
+    DEPARTMENT_APPROVED: '执行院长审批',
+  },
+  LABOR: {
+    SUBMITTED: '财务初审',
+    FINANCE_INITIAL_APPROVED: '部门负责人审批',
+    DEPARTMENT_APPROVED: '执行院长审批',
+    EXECUTIVE_APPROVED: '出纳付款',
+    PAID: '财务复核',
+  },
+  ADVANCE: {
+    SUBMITTED: '部门负责人审批',
+    DEPARTMENT_APPROVED: '财务审核',
+    FINANCE_APPROVED: '执行院长审批',
+    EXECUTIVE_APPROVED: '出纳付款',
+    PAID: '财务复核',
+  },
+}
+const todoNodeLabel = (item) => todoNodeLabels[item.businessType]?.[item.status]
+  || workflowStatusLabel(item.type, item.status)
+  || '待处理'
+const formatWaitingTime = (value) => {
+  if (!value) return '-'
+  const timestamp = new Date(value).getTime()
+  if (!Number.isFinite(timestamp)) return '-'
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时`
+  const days = Math.floor(hours / 24)
+  return `${days} 天`
+}
+
+const loadDashboardTodos = async () => {
+  if (!token.value || !canAccessMenu(currentUser.value?.role, 'myTodos')) {
+    dashboardTodoItems.value = []
+    dashboardTodoTotal.value = 0
+    dashboardTodoError.value = ''
+    return
+  }
+  dashboardTodoLoading.value = true
+  dashboardTodoError.value = ''
+  try {
+    const items = mapWorkbenchResponse((await api.get('/workbench/MY_TODOS')).data)
+    dashboardTodoTotal.value = items.length
+    dashboardTodoItems.value = items.slice(0, 5)
+  } catch (error) {
+    dashboardTodoItems.value = []
+    dashboardTodoTotal.value = 0
+    dashboardTodoError.value = error.response?.data?.message || '待办事项加载失败'
+  } finally {
+    dashboardTodoLoading.value = false
+  }
+}
 const rebuildWorkbench = () => {
   if (!currentUser.value) {
     myApplicationItems.value = []
@@ -716,20 +829,7 @@ const refreshWorkbench = async () => {
     if (workbenchSearchForm.businessType) params.businessType = workbenchSearchForm.businessType
     if (workbenchSearchForm.status) params.status = workbenchSearchForm.status
     if (workbenchSearchForm.keyword) params.keyword = workbenchSearchForm.keyword
-    const data = (await api.get(`/workbench/${scope}`, { params })).data.map(item => ({
-      key: `${item.businessType}-${item.businessId}`,
-      type: workbenchTypeLabels[item.businessType] || item.businessType,
-      businessType: item.businessType,
-      id: item.businessId,
-      number: item.number || `#${item.businessId}`,
-      title: item.title,
-      applicantName: item.applicantName,
-      departmentName: item.departmentName,
-      amount: item.amount,
-      status: item.status,
-      date: formatDateTime(item.time),
-      source: { id: item.businessId },
-    }))
+    const data = mapWorkbenchResponse((await api.get(`/workbench/${scope}`, { params })).data)
     if (scope === 'MY_APPLICATIONS') myApplicationItems.value = data
     if (scope === 'MY_TODOS') myTodoItems.value = data
     if (scope === 'DONE') doneItems.value = data
@@ -884,6 +984,7 @@ const handleSessionExpired = async () => {
 const refreshAll = async () => {
   const tasks = []
   if (canViewDashboard.value) tasks.push(loadDashboardStats())
+  if (canAccessMenu(currentUser.value?.role, 'myTodos')) tasks.push(loadDashboardTodos())
   if (canViewReimbursements.value) tasks.push(loadReimbursements())
   if (canApprove.value) tasks.push(loadPendingReimbursements())
   if (canViewPaymentTasks.value) tasks.push(loadPaymentTasks())
@@ -1312,10 +1413,28 @@ const renderCharts = () => {
   const statusData = statusOptions
     .map((item) => ({ name: item.label, value: Number(counts[item.value] || 0) }))
     .filter((item) => item.value > 0)
+  const statusTotal = Number(dashboardStats.value.reimbursementCount || 0)
+    || statusData.reduce((sum, item) => sum + item.value, 0)
   if (statusChart) {
     statusChart.setOption({
       color: ['#2563eb', '#84cc16', '#475569', '#f59e0b', '#06b6d4', '#ef4444', '#7c3aed', '#10b981'],
       tooltip: { trigger: 'item', formatter: '{b}<br/>{c} 单（{d}%）' },
+      title: {
+        text: String(statusTotal),
+        subtext: '总报销单数',
+        left: 'center',
+        top: '36%',
+        textStyle: {
+          color: '#172033',
+          fontSize: 24,
+          fontWeight: 700,
+        },
+        subtextStyle: {
+          color: '#667085',
+          fontSize: 12,
+          lineHeight: 18,
+        },
+      },
       legend: {
         bottom: 0,
         type: 'scroll',
@@ -1326,17 +1445,31 @@ const renderCharts = () => {
       },
       series: [{
         type: 'pie',
-        radius: ['43%', '66%'],
-        center: ['50%', '43%'],
+        radius: ['39%', '60%'],
+        center: ['50%', '44%'],
         avoidLabelOverlap: true,
-        minShowLabelAngle: 8,
+        minShowLabelAngle: 0,
         label: {
-          show: statusData.length <= 6,
+          show: true,
+          position: 'outside',
           color: '#475569',
           fontSize: 11,
-          formatter: '{b}\n{c} 单',
+          lineHeight: 16,
+          width: 116,
+          overflow: 'break',
+          formatter: ({ name, value, percent }) => `${name}\n${value} 单（${percent}%）`,
         },
-        labelLine: { length: 8, length2: 6 },
+        labelLine: {
+          show: true,
+          length: 14,
+          length2: 12,
+          smooth: 0.15,
+          lineStyle: { width: 1 },
+        },
+        labelLayout: {
+          hideOverlap: true,
+          moveOverlap: 'shiftY',
+        },
         emphasis: { scaleSize: 5 },
         data: statusData,
       }],
@@ -2587,7 +2720,7 @@ const submitAdvanceOffset = async () => {
 }
 const loadMenuData = async (menu) => {
   if (menu === 'dashboard' || menu === 'report') {
-    await loadDashboardStats()
+    await Promise.all([loadDashboardStats(), loadDashboardTodos()])
     await nextTick()
     renderCharts()
   }
@@ -2708,10 +2841,28 @@ onBeforeUnmount(() => {
         class="menu"
         @select="changeMenu"
       >
-        <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
-        </el-menu-item>
+        <template v-for="group in menuGroups" :key="group.key">
+          <div v-show="!effectiveSidebarCollapsed" class="menu-group-title">
+            <span>{{ group.label }}</span>
+          </div>
+          <el-menu-item
+            v-for="item in group.items"
+            :key="item.index"
+            :index="item.index"
+            :title="effectiveSidebarCollapsed ? item.label : undefined"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span class="menu-label">
+              <span>{{ item.label }}</span>
+              <el-badge
+                v-if="menuBadgeValue(item.index) > 0"
+                :value="menuBadgeValue(item.index)"
+                :max="99"
+                class="menu-count-badge"
+              />
+            </span>
+          </el-menu-item>
+        </template>
       </el-menu>
       </div>
     </el-aside>
@@ -2785,7 +2936,7 @@ onBeforeUnmount(() => {
                   <p>按当前角色可见数据汇总</p>
                 </div>
               </div>
-              <div v-if="hasStatusChartData" ref="statusChartRef" class="chart-box"></div>
+              <div v-if="hasStatusChartData" ref="statusChartRef" class="chart-box status-chart-box"></div>
               <el-empty v-else class="chart-empty" description="暂无报销状态数据" :image-size="72" />
             </section>
             <section class="chart-card">
@@ -2797,6 +2948,85 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="hasBudgetChartData" ref="budgetChartRef" class="chart-box"></div>
               <el-empty v-else class="chart-empty" description="暂无部门预算数据" :image-size="72" />
+            </section>
+          </div>
+
+          <div class="dashboard-bottom-grid">
+            <section class="dashboard-list-card recent-business-card">
+              <div class="section-header dashboard-section-header">
+                <div>
+                  <h2>最近业务单据</h2>
+                  <p>展示当前权限范围内最近更新的申请</p>
+                </div>
+              </div>
+              <el-table
+                :data="dashboardRecentItems"
+                class="dashboard-table"
+                empty-text="暂无最近业务单据"
+              >
+                <el-table-column prop="number" label="单据编号" min-width="150" show-overflow-tooltip />
+                <el-table-column prop="type" label="类型" width="72" />
+                <el-table-column prop="title" label="标题/摘要" min-width="150" show-overflow-tooltip />
+                <el-table-column label="金额" width="116">
+                  <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="112">
+                  <template #default="{ row }">
+                    <el-tag :type="workflowStatusType(row.type, row.status)" effect="light">
+                      {{ workflowStatusLabel(row.type, row.status) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="68" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openWorkflowItem(row)">查看</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </section>
+
+            <section v-loading="dashboardTodoLoading" class="dashboard-list-card todo-preview-card">
+              <div class="section-header dashboard-section-header">
+                <div class="todo-heading">
+                  <h2>待办事项</h2>
+                  <el-badge :value="dashboardTodoTotal" :max="99" />
+                </div>
+                <el-button link type="primary" @click="changeMenu('myTodos')">查看全部</el-button>
+              </div>
+              <el-alert
+                v-if="dashboardTodoError"
+                class="dashboard-todo-error"
+                :title="dashboardTodoError"
+                type="error"
+                :closable="false"
+                show-icon
+              >
+                <template #default>
+                  <el-button link type="danger" @click="loadDashboardTodos">重新加载</el-button>
+                </template>
+              </el-alert>
+              <div v-else-if="dashboardTodoItems.length" class="dashboard-todo-list">
+                <button
+                  v-for="item in dashboardTodoItems"
+                  :key="item.key"
+                  type="button"
+                  class="dashboard-todo-item"
+                  @click="openWorkflowItem(item)"
+                >
+                  <span class="todo-item-icon"><el-icon><Document /></el-icon></span>
+                  <span class="todo-item-content">
+                    <strong>{{ item.type }} {{ item.number }} · {{ item.title || '-' }}</strong>
+                    <small>{{ item.applicantName || '-' }} · {{ formatMoney(item.amount) }} · {{ todoNodeLabel(item) }}</small>
+                  </span>
+                  <span class="todo-item-time">等待 {{ formatWaitingTime(item.rawTime) }}</span>
+                </button>
+              </div>
+              <el-empty
+                v-else-if="!dashboardTodoLoading"
+                class="dashboard-list-empty"
+                description="当前没有待办事项"
+                :image-size="64"
+              />
             </section>
           </div>
         </section>

@@ -1,4 +1,5 @@
 const http = require('node:http')
+const port = Number(process.env.MOCK_API_PORT || 8080)
 
 const roles = {
   employee: 'EMPLOYEE',
@@ -64,10 +65,41 @@ http.createServer(async (request, response) => {
       overdueAdvanceCount: 1,
     })
   }
+  if (path === '/api/workbench/MY_TODOS') {
+    const now = Date.now()
+    const samples = [
+      ['REIMBURSEMENT', 101, 'BX20260702001', '培训费用报销', 'SUBMITTED', 3250, 10],
+      ['PURCHASE', 201, 'CG20260702001', '实验室显示器申购', 'FINANCE_APPROVED', 12680, 25],
+      ['LABOR', 301, 'LW20260702001', '专家咨询费发放', 'DEPARTMENT_APPROVED', 5600, 70],
+      ['ADVANCE', 401, 'YF20260702001', '会议场地预付款', 'EXECUTIVE_APPROVED', 18000, 180],
+      ['REIMBURSEMENT', 102, 'BX20260701002', '差旅交通费报销', 'PAID', 980, 360],
+      ['PURCHASE', 202, 'CG20260701002', '办公用品申购', 'SUBMITTED', 1680, 1440],
+    ]
+    return json(response, samples.map(([businessType, businessId, number, title, status, amount, minutes]) => ({
+      businessType,
+      businessId,
+      number,
+      title,
+      applicantId: 1,
+      applicantName: '张同学',
+      departmentId: 1,
+      departmentName: '科研管理部',
+      amount,
+      status,
+      time: new Date(now - minutes * 60000).toISOString(),
+    })))
+  }
+  if (path === '/api/reimbursements/payment-tasks') {
+    return json(response, [
+      { id: 501, approvalNumber: 'BX20260702011', title: '待付款报销一' },
+      { id: 502, approvalNumber: 'BX20260702012', title: '待付款报销二' },
+      { id: 503, approvalNumber: 'BX20260702013', title: '待付款报销三' },
+    ])
+  }
   if (path === '/api/ledger') {
     return json(response, { entries: [], totalIncome: 0, totalExpense: 0, balance: 0 })
   }
   return json(response, [])
-}).listen(8080, '127.0.0.1', () => {
-  console.log('Mock API listening on http://127.0.0.1:8080')
+}).listen(port, '127.0.0.1', () => {
+  console.log(`Mock API listening on http://127.0.0.1:${port}`)
 })
