@@ -45,7 +45,7 @@ public class CompleteDocumentPdfService {
         this.operationLogService = operationLogService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public PdfFile generate(AppUser user, DocumentModule module, Long id) {
         PdfModel model = switch (module) {
             case REIMBURSEMENT -> reimbursement(user, id);
