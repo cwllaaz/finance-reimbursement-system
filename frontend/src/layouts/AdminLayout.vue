@@ -16,8 +16,10 @@ import { formatDate, formatDateTime, formatMoney } from '../composables/useForma
 import { canAccessMenu, defaultMenuForRole } from '../composables/usePermissions'
 import { menuPathMap } from '../views/routeCatalog'
 import {
+  ArrowRight,
   DataAnalysis,
   Box,
+  CircleCheckFilled,
   Delete,
   Document,
   Edit,
@@ -25,11 +27,13 @@ import {
   Finished,
   Fold,
   HomeFilled,
+  Lock,
   MoreFilled,
   Money,
   Plus,
   Refresh,
   Search,
+  Setting,
   ShoppingCart,
   SwitchButton,
   Tickets,
@@ -400,14 +404,14 @@ const incomeCategories = ['科研经费收入', '财政拨款', '横向项目收
 const invoiceStatusOptions = ['未开票', '已开票', '无需开票']
 const ledgerBusinessTypes = ['收入', '报销', '劳务酬金', '申购', '暂借款/预付款']
 const demoAccounts = [
-  { username: 'employee', password: '123456', role: '员工', note: '提交自己的报销单' },
-  { username: 'manager', password: '123456', role: '部门负责人', note: '审批本部门报销' },
-  { username: 'finance', password: '123456', role: '财务人员', note: '财务审批并扣预算' },
-  { username: 'office', password: '123456', role: '办公室', note: '办理申购与资产验收' },
-  { username: 'executive', password: '123456', role: '执行院长', note: '查看全院财务情况' },
-  { username: 'committee', password: '123456', role: '院务委员会', note: '查看全院业务单据' },
-  { username: 'cashier', password: '123456', role: '出纳', note: '查看待付款任务' },
-  { username: 'admin', password: '123456', role: '管理员', note: '查看全部数据' },
+  { username: 'employee', password: '123456', role: '员工', note: '提交报销申请，查看个人单据', icon: User },
+  { username: 'manager', password: '123456', role: '部门负责人', note: '审批本部门业务申请', icon: Finished },
+  { username: 'finance', password: '123456', role: '财务人员', note: '财务审核、预算与复核', icon: Document },
+  { username: 'office', password: '123456', role: '办公室', note: '申购协作与资产验收', icon: Box },
+  { username: 'executive', password: '123456', role: '执行院长', note: '查看全院数据并审批', icon: DataAnalysis },
+  { username: 'committee', password: '123456', role: '院务委员会', note: '查看全院业务单据', icon: Tickets },
+  { username: 'cashier', password: '123456', role: '出纳', note: '办理付款与上传回执', icon: Money },
+  { username: 'admin', password: '123456', role: '系统管理员', note: '系统管理与权限配置', icon: Setting },
 ]
 const roleLabels = {
   EMPLOYEE: '员工',
@@ -3031,34 +3035,63 @@ onBeforeUnmount(() => {
 
 <template>
   <main v-if="!isLoggedIn" class="login-page">
+    <div class="login-brand">
+      <span class="login-brand-mark"><i></i><i></i><i></i></span>
+      <strong>财务报销与预算管理系统</strong>
+    </div>
     <section class="login-panel">
       <div class="login-copy">
-        <div class="brand-large">
-          <span>财</span>
-          <strong>财务报销与预算管理系统</strong>
-        </div>
-        <h1>项目后台</h1>
-        <div class="connection-line">
-          <el-tag :type="backendOnline ? 'success' : 'danger'">{{ backendOnline ? '后端已连接' : '后端未连接' }}</el-tag>
-          <el-button link type="primary" @click="checkBackend">检测接口</el-button>
-        </div>
-      </div>
-      <div class="login-card">
-        <h2>登录</h2>
-        <el-form label-position="top" @submit.prevent>
-          <el-form-item label="用户名"><el-input v-model="loginForm.username" :prefix-icon="User" /></el-form-item>
-          <el-form-item label="密码"><el-input v-model="loginForm.password" show-password /></el-form-item>
-          <el-button class="full-width" type="primary" size="large" @click="handleLogin">进入系统</el-button>
-        </el-form>
-        <div class="account-list">
-          <div v-for="account in demoAccounts" :key="account.username" class="account-item" @click="fillAccount(account)">
-            <strong>{{ account.username }}</strong>
-            <span>{{ account.role }} / {{ account.password }}</span>
-            <small>{{ account.note }}</small>
+        <div class="login-kicker">专业 · 高效 · 安全</div>
+        <h1>企业财务协同平台</h1>
+        <p>覆盖预算编制、报销申请、审批流转、费用管控、数据分析的全流程一体化管理平台，助力单位降本增效、合规运营、数据驱动决策。</p>
+        <div class="login-capabilities">
+          <div class="capability-item">
+            <el-icon><Wallet /></el-icon>
+            <div><strong>预算控制</strong><span>预算编制到执行全流程实时监控</span></div>
+          </div>
+          <div class="capability-item">
+            <el-icon><CircleCheckFilled /></el-icon>
+            <div><strong>智能审批</strong><span>多维度审批规则，高效合规</span></div>
+          </div>
+          <div class="capability-item">
+            <el-icon><Document /></el-icon>
+            <div><strong>报销流程</strong><span>线上申请与审批，全程可追溯</span></div>
+          </div>
+          <div class="capability-item">
+            <el-icon><DataAnalysis /></el-icon>
+            <div><strong>数据分析</strong><span>多维度报表统计，辅助决策</span></div>
           </div>
         </div>
       </div>
+      <div class="login-card">
+        <div class="login-card-heading">
+          <h2>用户登录</h2>
+          <p><el-icon><Lock /></el-icon> 多重安全防护，保障您的数据安全</p>
+        </div>
+        <el-form label-position="top" @submit.prevent>
+          <el-form-item label="用户名"><el-input v-model="loginForm.username" :prefix-icon="User" placeholder="请输入用户名" size="large" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="loginForm.password" :prefix-icon="Lock" placeholder="请输入密码" size="large" show-password @keyup.enter="handleLogin" /></el-form-item>
+          <el-button class="full-width" type="primary" size="large" @click="handleLogin">进入系统</el-button>
+        </el-form>
+        <div class="quick-login-divider"><span>快速进入（选择角色）</span></div>
+        <div class="account-list">
+          <div v-for="account in demoAccounts" :key="account.username" class="account-item" @click="fillAccount(account)">
+            <el-icon class="account-icon"><component :is="account.icon" /></el-icon>
+            <div class="account-copy">
+              <strong>{{ account.role }} <span>/ {{ account.username }}</span></strong>
+              <small>{{ account.note }}</small>
+            </div>
+            <el-icon class="account-arrow"><ArrowRight /></el-icon>
+          </div>
+        </div>
+        <div class="connection-line">
+          <span :class="['connection-dot', { online: backendOnline }]"></span>
+          {{ backendOnline ? '服务连接正常' : '服务暂未连接' }}
+          <el-button link type="primary" @click="checkBackend">重新检测</el-button>
+        </div>
+      </div>
     </section>
+    <footer class="login-footer">© 2026 财务报销与预算管理系统　|　建议使用 Chrome、Edge 等现代浏览器访问　|　当前版本 v3.0</footer>
   </main>
 
   <el-container v-else :class="['app-shell', { 'is-sidebar-collapsed': effectiveSidebarCollapsed }]">
