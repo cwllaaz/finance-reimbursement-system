@@ -414,7 +414,9 @@ public class LaborApplicationService {
         }
     }
     private void requireApplicantRole(AppUser user) {
-        if (user.getRole() == UserRole.CASHIER) throw new ForbiddenException("出纳不能创建劳务单");
+        if (EnumSet.of(UserRole.CASHIER, UserRole.COMMITTEE).contains(user.getRole())) {
+            throw new ForbiddenException("当前角色不能创建劳务单");
+        }
     }
     private void requireModuleAccess(AppUser user) {
         if (user.getRole() == UserRole.OFFICE) {
@@ -430,11 +432,18 @@ public class LaborApplicationService {
         if (!canView(user, value)) throw new ForbiddenException("无权查看该劳务单");
     }
     private boolean canView(AppUser user, LaborApplication value) {
-        if (EnumSet.of(UserRole.ADMIN, UserRole.FINANCE, UserRole.EXECUTIVE).contains(user.getRole())) return true;
+        if (EnumSet.of(UserRole.ADMIN, UserRole.FINANCE, UserRole.EXECUTIVE, UserRole.COMMITTEE)
+                .contains(user.getRole())) return true;
         if (user.getRole() == UserRole.DEPARTMENT_MANAGER) return sameDepartment(user, value);
-        if (user.getRole() == UserRole.CASHIER) return EnumSet.of(
-                LaborStatus.EXECUTIVE_APPROVED, LaborStatus.PAID, LaborStatus.COMPLETED).contains(value.getStatus());
+        if (user.getRole() == UserRole.CASHIER) {
+            return value.getStatus() == LaborStatus.EXECUTIVE_APPROVED || paidBy(user, value.getId());
+        }
         return value.getApplicant().getId().equals(user.getId());
+    }
+    private boolean paidBy(AppUser user, Long applicationId) {
+        return approvalRepository.findDetailsByApproverId(user.getId()).stream()
+                .anyMatch(record -> record.getLaborApplication().getId().equals(applicationId)
+                        && "CASHIER_PAYMENT".equals(record.getApprovalNode()));
     }
     private boolean sameDepartment(AppUser user, LaborApplication value) {
         return user.getDepartment() != null && value.getDepartment() != null

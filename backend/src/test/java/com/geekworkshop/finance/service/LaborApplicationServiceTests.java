@@ -62,6 +62,22 @@ class LaborApplicationServiceTests {
     }
 
     @Test
+    void committeeCanViewLaborApplicationsFromAllDepartments() {
+        LaborApplication first = application(LaborStatus.SUBMITTED);
+        LaborApplication second = application(LaborStatus.COMPLETED);
+        ReflectionTestUtils.setField(second, "id", 11L);
+        Department other = new Department();
+        ReflectionTestUtils.setField(other, "id", 99L);
+        other.setName("Other");
+        second.setDepartment(other);
+        when(applicationRepository.findAllDetails()).thenReturn(List.of(first, second));
+
+        assertEquals(2, service.list(user(7L, UserRole.COMMITTEE), null, null).size());
+        assertThrows(ForbiddenException.class,
+                () -> service.create(user(7L, UserRole.COMMITTEE), request()));
+    }
+
+    @Test
     void listMasksIdCardAndBankAccount() {
         LaborApplication value = application(LaborStatus.DRAFT);
         when(applicationRepository.findAllDetails()).thenReturn(List.of(value));

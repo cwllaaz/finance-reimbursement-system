@@ -57,6 +57,7 @@ const timelineLoading = ref(false)
 const workbenchLoading = ref(false)
 const dashboardTodoLoading = ref(false)
 const exportLoading = ref(false)
+const documentDownloadKey = ref('')
 const saving = ref(false)
 const dialogVisible = ref(false)
 const approvalDialogVisible = ref(false)
@@ -149,6 +150,10 @@ const doneItems = ref([])
 const dashboardTodoItems = ref([])
 const dashboardTodoTotal = ref(0)
 const dashboardTodoError = ref('')
+const todoDrawerVisible = ref(false)
+const todoDetailLoading = ref(false)
+const selectedTodo = ref(null)
+const todoDetail = ref(null)
 const dashboardLoading = ref(false)
 const dashboardError = ref('')
 const rowActionLoading = ref('')
@@ -174,7 +179,7 @@ const searchForm = reactive({ keyword: '', status: '', expenseDateRange: [] })
 const pendingSearchForm = reactive({ keyword: '' })
 const userSearchForm = reactive({ keyword: '', role: '' })
 const operationLogSearchForm = reactive({ keyword: '', module: '', action: '' })
-const workbenchSearchForm = reactive({ businessType: '', status: '', keyword: '' })
+const workbenchSearchForm = reactive({ businessType: '', status: '', currentNode: '', keyword: '' })
 const approvalForm = reactive({ comment: '' })
 const budgetForm = reactive({ totalAmount: 0 })
 const paymentForm = reactive({ paymentDate: '', paymentAmount: null, voucherNumber: '', comment: '' })
@@ -400,6 +405,7 @@ const demoAccounts = [
   { username: 'finance', password: '123456', role: '财务人员', note: '财务审批并扣预算' },
   { username: 'office', password: '123456', role: '办公室', note: '办理申购与资产验收' },
   { username: 'executive', password: '123456', role: '执行院长', note: '查看全院财务情况' },
+  { username: 'committee', password: '123456', role: '院务委员会', note: '查看全院业务单据' },
   { username: 'cashier', password: '123456', role: '出纳', note: '查看待付款任务' },
   { username: 'admin', password: '123456', role: '管理员', note: '查看全部数据' },
 ]
@@ -409,6 +415,7 @@ const roleLabels = {
   FINANCE: '财务人员',
   OFFICE: '办公室',
   EXECUTIVE: '执行院长',
+  COMMITTEE: '院务委员会',
   CASHIER: '出纳',
   ADMIN: '管理员',
 }
@@ -501,8 +508,8 @@ const statusMap = computed(() => Object.fromEntries(statusOptions.map((item) => 
 const isHighValueForm = computed(() => Number(form.amount || 0) > 50000)
 const isLoggedIn = computed(() => Boolean(currentUser.value && token.value))
 const dashboardRoles = ['DEPARTMENT_MANAGER', 'FINANCE', 'EXECUTIVE', 'ADMIN']
-const reimbursementRoles = ['EMPLOYEE', 'DEPARTMENT_MANAGER', 'FINANCE', 'EXECUTIVE', 'ADMIN']
-const paymentTaskRoles = ['CASHIER', 'FINANCE', 'ADMIN']
+const reimbursementRoles = ['EMPLOYEE', 'DEPARTMENT_MANAGER', 'FINANCE', 'EXECUTIVE', 'COMMITTEE', 'CASHIER', 'ADMIN']
+const paymentTaskRoles = ['FINANCE', 'ADMIN']
 const canViewDashboard = computed(() => dashboardRoles.includes(currentUser.value?.role))
 const canViewReimbursements = computed(() => reimbursementRoles.includes(currentUser.value?.role))
 const canViewPaymentTasks = computed(() => paymentTaskRoles.includes(currentUser.value?.role))
@@ -517,14 +524,14 @@ const canManageIncome = computed(() => ['FINANCE', 'ADMIN'].includes(currentUser
 const canViewLedger = computed(() => ['FINANCE', 'EXECUTIVE', 'ADMIN', 'DEPARTMENT_MANAGER'].includes(currentUser.value?.role))
 const canExportLedger = computed(() => ['FINANCE', 'EXECUTIVE', 'ADMIN'].includes(currentUser.value?.role))
 const canViewWorkbench = computed(() => Boolean(currentUser.value))
-const purchaseRoles = ['EMPLOYEE', 'DEPARTMENT_MANAGER', 'FINANCE', 'OFFICE', 'EXECUTIVE', 'ADMIN']
+const purchaseRoles = ['EMPLOYEE', 'DEPARTMENT_MANAGER', 'FINANCE', 'OFFICE', 'EXECUTIVE', 'COMMITTEE', 'ADMIN']
 const canViewPurchases = computed(() => purchaseRoles.includes(currentUser.value?.role))
 const canCreatePurchase = computed(() => ['EMPLOYEE', 'OFFICE', 'ADMIN'].includes(currentUser.value?.role))
 const canApprovePurchase = computed(() => ['DEPARTMENT_MANAGER', 'FINANCE', 'EXECUTIVE', 'ADMIN'].includes(currentUser.value?.role))
 const canAcceptAssets = computed(() => ['OFFICE', 'ADMIN'].includes(currentUser.value?.role))
 const canViewLabor = computed(() => currentUser.value?.role !== 'OFFICE')
 const canViewAdvances = computed(() => currentUser.value?.role !== 'OFFICE')
-const canCreateLabor = computed(() => !['CASHIER', 'OFFICE'].includes(currentUser.value?.role))
+const canCreateLabor = computed(() => !['CASHIER', 'OFFICE', 'COMMITTEE'].includes(currentUser.value?.role))
 const canExportLabor = computed(() => ['FINANCE', 'ADMIN'].includes(currentUser.value?.role))
 const purchaseStatusMap = Object.fromEntries(purchaseStatusOptions.map(item => [item.value, item]))
 const purchaseTotal = computed(() => purchaseForm.items.reduce(
@@ -712,10 +719,49 @@ const mapWorkbenchResponse = (items) => items.map(item => ({
   departmentName: item.departmentName,
   amount: item.amount,
   status: item.status,
-  date: formatDateTime(item.time),
-  rawTime: item.time,
+  date: formatDateTime(item.waitingSince || item.time),
+  rawTime: item.waitingSince || item.time,
+  waitingSince: item.waitingSince,
+  currentNode: item.currentNode,
+  availableActions: item.availableActions || ['VIEW'],
   source: { id: item.businessId },
 }))
+
+const workbenchTypeTabs = [
+  { label: '全部', value: '' },
+  { label: '报销', value: 'REIMBURSEMENT' },
+  { label: '申购', value: 'PURCHASE' },
+  { label: '劳务酬金', value: 'LABOR' },
+  { label: '借款/预付款', value: 'ADVANCE' },
+]
+const workbenchStatusOptions = computed(() => {
+  const options = [
+    ...statusOptions,
+    ...purchaseStatusOptions,
+    ...laborStatusOptions,
+    ...advanceStatusOptions,
+  ]
+  return [...new Map(options.map(item => [item.value, item])).values()]
+})
+const workbenchNodeLabels = {
+  FINANCE_INITIAL: '财务初审',
+  FINANCE: '财务审核',
+  DEPARTMENT: '部门负责人审批',
+  EXECUTIVE: '执行院长审批',
+  CASHIER_PAYMENT: '出纳付款',
+  FINANCE_RECHECK: '财务复核',
+  OFFSET: '还款/冲账',
+}
+const getWorkbenchNodeLabel = node => workbenchNodeLabels[node] || node || '-'
+const visibleWorkbenchItems = computed(() => {
+  const source = activeMenu.value === 'myApplications'
+    ? myApplicationItems.value
+    : activeMenu.value === 'myTodos'
+      ? myTodoItems.value
+      : doneItems.value
+  if (activeMenu.value !== 'myTodos' || !workbenchSearchForm.currentNode) return source
+  return source.filter(item => item.currentNode === workbenchSearchForm.currentNode)
+})
 
 const todoNodeLabels = {
   REIMBURSEMENT: {
@@ -745,7 +791,9 @@ const todoNodeLabels = {
     PAID: '财务复核',
   },
 }
-const todoNodeLabel = (item) => todoNodeLabels[item.businessType]?.[item.status]
+const todoNodeLabel = (item) => (item.currentNode
+  ? getWorkbenchNodeLabel(item.currentNode)
+  : todoNodeLabels[item.businessType]?.[item.status])
   || workflowStatusLabel(item.type, item.status)
   || '待处理'
 const formatWaitingTime = (value) => {
@@ -840,8 +888,13 @@ const refreshWorkbench = async () => {
   }
 }
 const resetWorkbenchSearch = async () => {
-  Object.assign(workbenchSearchForm, { businessType: '', status: '', keyword: '' })
+  Object.assign(workbenchSearchForm, { businessType: '', status: '', currentNode: '', keyword: '' })
   await refreshWorkbench()
+}
+const refreshTodoAfterAction = async () => {
+  todoDrawerVisible.value = false
+  if (activeMenu.value === 'myTodos') await refreshWorkbench()
+  await loadDashboardTodos()
 }
 const openWorkflowItem = (item) => {
   if (item.type === '报销') return openDetail(item.source)
@@ -851,6 +904,165 @@ const openWorkflowItem = (item) => {
   if (item.type === '收入') return openIncomeDetail(item.source)
   if (item.type === '资产') return openAssetDetail(item.source)
   return null
+}
+const canDownloadCompleteDocument = row => {
+  const role = currentUser.value?.role
+  if (['FINANCE', 'EXECUTIVE', 'COMMITTEE', 'ADMIN'].includes(role)) return true
+  if (role === 'EMPLOYEE') return row.applicantId === currentUser.value?.id
+  if (role === 'DEPARTMENT_MANAGER') {
+    return row.departmentId
+      ? row.departmentId === currentUser.value?.departmentId
+      : row.departmentName === currentUser.value?.departmentName
+  }
+  return false
+}
+const downloadCompleteDocument = async (module, row) => {
+  const key = `${module}-${row.id}`
+  if (documentDownloadKey.value) return
+  documentDownloadKey.value = key
+  try {
+    const response = await api.get(`/documents/${module}/${row.id}/pdf`, { responseType: 'blob' })
+    const url = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${row.approvalNumber || row.applicationNumber || row.number || '完整单据'}-完整单据.pdf`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('完整单据 PDF 已生成')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '完整单据下载失败，请检查数据权限')
+  } finally {
+    documentDownloadKey.value = ''
+  }
+}
+const todoDetailEntity = computed(() => {
+  if (!selectedTodo.value || !todoDetail.value) return null
+  return selectedTodo.value.businessType === 'REIMBURSEMENT'
+    ? todoDetail.value.reimbursement
+    : todoDetail.value
+})
+const todoAttachments = computed(() => {
+  if (!todoDetail.value) return []
+  return selectedTodo.value?.businessType === 'REIMBURSEMENT'
+    ? (todoDetail.value.attachments || [])
+    : (todoDetail.value.attachments || [])
+})
+const todoTimeline = computed(() => {
+  if (!todoDetail.value) return []
+  if (selectedTodo.value?.businessType === 'REIMBURSEMENT') return todoDetail.value.timeline || []
+  if (todoDetail.value.timeline) return todoDetail.value.timeline
+  return (todoDetail.value.approvalRecords || []).map(record => ({
+    nodeType: `${record.approvalNode}-${record.id}`,
+    title: record.approvalNode,
+    status: record.action === 'REJECT' ? 'REJECTED' : 'COMPLETED',
+    operatorName: record.approverName,
+    comment: record.comment,
+    time: record.createdAt,
+  }))
+})
+const todoAttachmentType = computed(() =>
+  selectedTodo.value?.availableActions?.includes('OFFSET') ? 'OFFSET_VOUCHER' : 'BANK_RECEIPT')
+const todoHasRequiredVoucher = computed(() =>
+  todoAttachments.value.some(item => item.attachmentType === todoAttachmentType.value))
+const todoActionLabels = {
+  APPROVE: '审批通过',
+  REJECT: '驳回',
+  UPLOAD_RECEIPT: '上传银行回执',
+  PAY: '登记付款',
+  FINANCE_RECHECK: '财务复核',
+  OFFSET: '登记还款/冲账',
+  VIEW: '查看详情',
+}
+const loadTodoDetail = async item => {
+  const id = item.id
+  if (item.businessType === 'REIMBURSEMENT') {
+    const [detail, timeline] = await Promise.all([
+      api.get(`/reimbursements/${id}/detail`),
+      api.get(`/reimbursements/${id}/timeline`),
+    ])
+    return { ...detail.data, timeline: timeline.data }
+  }
+  if (item.businessType === 'PURCHASE') return (await api.get(`/purchases/${id}`)).data
+  if (item.businessType === 'LABOR') return (await api.get(`/labor-applications/${id}`)).data
+  if (item.businessType === 'ADVANCE') return (await api.get(`/advances/${id}`)).data
+  return null
+}
+const openTodoDrawer = async item => {
+  selectedTodo.value = item
+  todoDetail.value = null
+  todoDrawerVisible.value = true
+  todoDetailLoading.value = true
+  try {
+    todoDetail.value = await loadTodoDetail(item)
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '读取待办详情失败')
+    todoDrawerVisible.value = false
+  } finally {
+    todoDetailLoading.value = false
+  }
+}
+const refreshTodoDetail = async () => {
+  if (selectedTodo.value) todoDetail.value = await loadTodoDetail(selectedTodo.value)
+}
+const uploadTodoVoucher = async ({ file }) => {
+  if (!selectedTodo.value || saving.value) return
+  const formData = new FormData()
+  formData.append('file', file)
+  saving.value = true
+  try {
+    const { businessType, id } = selectedTodo.value
+    if (businessType === 'REIMBURSEMENT') {
+      formData.append('attachmentType', 'BANK_RECEIPT')
+      await api.post(`/reimbursements/${id}/attachments`, formData)
+    } else if (businessType === 'LABOR') {
+      await api.post(`/labor-applications/${id}/attachments`, formData, {
+        params: { attachmentType: 'BANK_RECEIPT' },
+      })
+    } else if (businessType === 'ADVANCE') {
+      await api.post(`/advances/${id}/attachments`, formData, {
+        params: { attachmentType: todoAttachmentType.value },
+      })
+    }
+    await refreshTodoDetail()
+    ElMessage.success(todoAttachmentType.value === 'OFFSET_VOUCHER' ? '冲账凭证上传成功' : '银行回执上传成功')
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '凭证上传失败')
+  } finally {
+    saving.value = false
+  }
+}
+const handleTodoAction = async action => {
+  if (!selectedTodo.value || !todoDetailEntity.value || saving.value) return
+  const row = todoDetailEntity.value
+  if (action === 'VIEW' || action === 'UPLOAD_RECEIPT') return
+  if (action === 'PAY' && !todoHasRequiredVoucher.value) {
+    ElMessage.warning('请先在当前待办中上传银行回执')
+    return
+  }
+  if (action === 'OFFSET' && !todoHasRequiredVoucher.value) {
+    ElMessage.warning('请先上传还款/冲账凭证')
+    return
+  }
+  if (selectedTodo.value.businessType === 'REIMBURSEMENT') {
+    if (action === 'PAY') return openPaymentDialog(row)
+    if (['APPROVE', 'REJECT', 'FINANCE_RECHECK'].includes(action)) {
+      return openApprovalDialog(row, action === 'REJECT' ? 'REJECT' : 'APPROVE')
+    }
+  }
+  if (selectedTodo.value.businessType === 'PURCHASE') {
+    return openPurchaseApproval(row, action === 'REJECT' ? 'REJECT' : 'APPROVE')
+  }
+  if (selectedTodo.value.businessType === 'LABOR') {
+    selectedLabor.value = row
+    if (action === 'PAY') return openLaborPayment(row)
+    return openLaborApproval(row, action === 'REJECT' ? 'REJECT' : 'APPROVE')
+  }
+  if (selectedTodo.value.businessType === 'ADVANCE') {
+    selectedAdvance.value = row
+    if (action === 'PAY') return openAdvancePayment(row)
+    if (action === 'OFFSET') return openAdvanceOffset(row)
+    return openAdvanceApproval(row, action === 'REJECT' ? 'REJECT' : 'APPROVE')
+  }
 }
 const fillAccount = (account) => {
   loginForm.username = account.username
@@ -996,7 +1208,7 @@ const refreshAll = async () => {
   if (canViewIncome.value) tasks.push(loadIncomes())
   if (canViewLedger.value) tasks.push(loadLedger())
   if (canManageIncome.value || canViewLedger.value) tasks.push(loadDepartments())
-  tasks.push(loadAssets())
+  if (canAccessMenu(currentUser.value?.role, 'assets')) tasks.push(loadAssets())
   if (canAcceptAssets.value) tasks.push(loadEligibleAssetPurchases(), loadAssetClaimants())
   if (canViewAdvances.value) tasks.push(loadAdvances())
   await Promise.all(tasks)
@@ -1423,52 +1635,60 @@ const renderCharts = () => {
         text: String(statusTotal),
         subtext: '总报销单数',
         left: 'center',
-        top: '36%',
+        top: '37%',
         textStyle: {
           color: '#172033',
-          fontSize: 24,
+          fontSize: 30,
           fontWeight: 700,
         },
         subtextStyle: {
           color: '#667085',
-          fontSize: 12,
-          lineHeight: 18,
+          fontSize: 13,
+          lineHeight: 20,
         },
       },
       legend: {
-        bottom: 0,
-        type: 'scroll',
+        bottom: 2,
+        type: 'plain',
+        left: 'center',
+        width: '96%',
         itemWidth: 10,
         itemHeight: 8,
-        itemGap: 12,
+        itemGap: 10,
         textStyle: { color: '#64748b', fontSize: 11 },
       },
       series: [{
         type: 'pie',
-        radius: ['39%', '60%'],
-        center: ['50%', '44%'],
+        radius: ['45%', '69%'],
+        center: ['50%', '45%'],
         avoidLabelOverlap: true,
         minShowLabelAngle: 0,
         label: {
           show: true,
           position: 'outside',
+          alignTo: 'labelLine',
+          bleedMargin: 4,
+          distanceToLabelLine: 2,
+          minMargin: 10,
+          verticalAlign: 'bottom',
           color: '#475569',
-          fontSize: 11,
-          lineHeight: 16,
-          width: 116,
+          fontSize: 12,
+          lineHeight: 18,
+          padding: 0,
+          width: 128,
           overflow: 'break',
           formatter: ({ name, value, percent }) => `${name}\n${value} 单（${percent}%）`,
         },
         labelLine: {
           show: true,
-          length: 14,
-          length2: 12,
-          smooth: 0.15,
-          lineStyle: { width: 1 },
+          length: 18,
+          length2: 50,
+          minTurnAngle: 70,
+          smooth: 0.1,
+          lineStyle: { width: 1.5 },
         },
         labelLayout: {
-          hideOverlap: true,
-          moveOverlap: 'shiftY',
+          hideOverlap: false,
         },
         emphasis: { scaleSize: 5 },
         data: statusData,
@@ -1617,13 +1837,17 @@ const submitReimbursement = async (row) => {
     const attachments = detail.attachments || []
     const missing = []
     if (!hasAttachmentType(attachments, 'INVOICE')) missing.push('发票')
-    if (!hasOtherCredential(attachments)) missing.push('其他凭证')
+    const reimbursement = detail.reimbursement || {}
+    if (!String(reimbursement.applicantPhone || '').trim()) missing.push('申请人电话')
+    if (!String(reimbursement.bankAccount || '').trim()) missing.push('银行账号')
+    if (!String(reimbursement.payeeName || '').trim()) missing.push('收款人全称')
+    if (!String(reimbursement.reimbursementReason || '').trim()) missing.push('报销事由')
     if (missing.length) {
       ElMessage.warning(`提交前请上传：${missing.join('、')}`)
       return
     }
     await ElMessageBox.confirm(
-      `确定提交“${row.title}”进入审批吗？已检查发票和其他凭证。`,
+      `确定提交“${row.title}”进入审批吗？已检查必填信息和发票。`,
       '提交确认',
       { type: 'info' },
     )
@@ -1698,6 +1922,7 @@ const submitApproval = async () => {
     ElMessage.success(approvalAction.value === 'APPROVE' ? '审批通过' : '已驳回')
     approvalDialogVisible.value = false
     await refreshAll()
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '审批失败')
   } finally {
@@ -1761,6 +1986,7 @@ const submitPayment = async () => {
     ElMessage.success('付款信息已登记，进入财务复核')
     paymentDialogVisible.value = false
     await refreshAll()
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '付款登记失败，请先在详情中上传银行回执')
   } finally {
@@ -2199,6 +2425,7 @@ const approvePurchase = async () => {
     ElMessage.success(purchaseApprovalForm.action === 'APPROVE' ? '申购审批通过' : '申购单已退回')
     purchaseApprovalVisible.value = false
     await Promise.all([loadPurchases(), loadPendingPurchases()])
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '审批失败')
   } finally {
@@ -2420,6 +2647,7 @@ const submitLaborApproval = async () => {
     laborApprovalVisible.value = false
     laborDetailVisible.value = false
     await loadLaborApplications()
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '审批失败')
   } finally {
@@ -2464,6 +2692,7 @@ const submitLaborPayment = async () => {
     ElMessage.success('付款已登记，等待财务复核')
     laborPaymentVisible.value = false
     await loadLaborApplications()
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '付款登记失败')
   } finally {
@@ -2645,6 +2874,7 @@ const submitAdvanceApproval = async () => {
     advanceApprovalVisible.value = false
     advanceDetailVisible.value = false
     await Promise.all([loadAdvances(), canViewDashboard.value ? loadDashboardStats() : Promise.resolve()])
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '审批失败')
   } finally {
@@ -2689,6 +2919,7 @@ const submitAdvancePayment = async () => {
     ElMessage.success('付款已登记')
     advancePaymentVisible.value = false
     await loadAdvances()
+    await refreshTodoAfterAction()
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '付款失败')
   } finally {
@@ -2702,18 +2933,33 @@ const openAdvanceOffset = row => {
   advanceOffsetVisible.value = true
 }
 const submitAdvanceOffset = async () => {
+  if (saving.value) return
   if (!advanceOffsetForm.amount || Number(advanceOffsetForm.amount) <= 0) {
     ElMessage.warning('请输入本次冲账金额')
     return
   }
+  if (!advanceOffsetForm.comment.trim()) {
+    ElMessage.warning('请填写还款/冲账说明')
+    return
+  }
+  if (!(selectedAdvance.value?.attachments || []).some(item => item.attachmentType === 'OFFSET_VOUCHER')) {
+    ElMessage.warning('请先上传还款/冲账凭证')
+    return
+  }
   saving.value = true
   try {
+    await ElMessageBox.confirm(
+      `确认登记本次还款/冲账 ${formatMoney(advanceOffsetForm.amount)} 吗？`,
+      '冲账确认',
+      { type: 'warning', confirmButtonText: '确认登记' },
+    )
     await api.post(`/advances/${selectedAdvance.value.id}/offset`, advanceOffsetForm)
     ElMessage.success('冲账记录已保存')
     advanceOffsetVisible.value = false
     await Promise.all([loadAdvances(), loadDashboardStats()])
+    await refreshTodoAfterAction()
   } catch (error) {
-    ElMessage.error(error.response?.data?.message || '冲账失败')
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.message || '冲账失败')
   } finally {
     saving.value = false
   }
@@ -3039,8 +3285,21 @@ onBeforeUnmount(() => {
             </div>
             <el-button :icon="Refresh" @click="refreshWorkbench">刷新</el-button>
           </div>
+          <el-tabs
+            v-if="activeMenu === 'myTodos'"
+            v-model="workbenchSearchForm.businessType"
+            class="workbench-type-tabs"
+            @tab-change="refreshWorkbench"
+          >
+            <el-tab-pane
+              v-for="item in workbenchTypeTabs"
+              :key="item.value || 'all'"
+              :label="item.label"
+              :name="item.value"
+            />
+          </el-tabs>
           <el-form :inline="true" :model="workbenchSearchForm" class="search-form">
-            <el-form-item label="业务类型">
+            <el-form-item v-if="activeMenu !== 'myTodos'" label="业务类型">
               <el-select v-model="workbenchSearchForm.businessType" clearable placeholder="全部类型" class="status-select">
                 <el-option label="报销" value="REIMBURSEMENT" />
                 <el-option label="申购" value="PURCHASE" />
@@ -3050,7 +3309,12 @@ onBeforeUnmount(() => {
             </el-form-item>
             <el-form-item label="状态">
               <el-select v-model="workbenchSearchForm.status" clearable filterable allow-create placeholder="全部状态" class="status-select">
-                <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
+                <el-option v-for="item in workbenchStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="activeMenu === 'myTodos'" label="当前节点">
+              <el-select v-model="workbenchSearchForm.currentNode" clearable placeholder="全部节点" class="status-select">
+                <el-option v-for="(label, value) in workbenchNodeLabels" :key="value" :label="label" :value="value" />
               </el-select>
             </el-form-item>
             <el-form-item label="关键词">
@@ -3063,7 +3327,7 @@ onBeforeUnmount(() => {
           </el-form>
           <el-table
             v-loading="workbenchLoading"
-            :data="activeMenu === 'myApplications' ? myApplicationItems : activeMenu === 'myTodos' ? myTodoItems : doneItems"
+            :data="visibleWorkbenchItems"
             border stripe class="data-table"
             empty-text="暂无数据"
           >
@@ -3078,10 +3342,21 @@ onBeforeUnmount(() => {
                 <el-tag :type="workflowStatusType(row.type, row.status)">{{ workflowStatusLabel(row.type, row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="date" label="时间" width="120" />
-            <el-table-column label="操作" width="100" fixed="right">
+            <el-table-column v-if="activeMenu === 'myTodos'" label="当前节点" width="135">
+              <template #default="{ row }">{{ getWorkbenchNodeLabel(row.currentNode) }}</template>
+            </el-table-column>
+            <el-table-column prop="date" :label="activeMenu === 'myTodos' ? '等待起始' : '时间'" width="170" />
+            <el-table-column label="操作" :width="activeMenu === 'myTodos' ? 150 : 100" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openWorkflowItem(row)">查看</el-button>
+                <el-button
+                  v-if="activeMenu === 'myTodos'"
+                  type="primary"
+                  size="small"
+                  @click="openTodoDrawer(row)"
+                >
+                  处理待办
+                </el-button>
+                <el-button v-else link type="primary" @click="openWorkflowItem(row)">查看</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -3142,6 +3417,7 @@ onBeforeUnmount(() => {
             <el-table-column label="操作" width="190" fixed="right" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openDetail(row)">查看</el-button>
+                <el-button v-if="canDownloadCompleteDocument(row)" link type="info" :loading="documentDownloadKey === `REIMBURSEMENT-${row.id}`" @click="downloadCompleteDocument('REIMBURSEMENT', row)">PDF</el-button>
                 <el-button link type="primary" :icon="Edit" :disabled="!canEditRow(row)" @click="openEditDialog(row)">编辑</el-button>
                 <el-button link type="success" :loading="isRowActionLoading('submit-reimbursement', row.id)" :disabled="!canSubmitRow(row) || Boolean(rowActionLoading)" @click="submitReimbursement(row)">提交</el-button>
                 <el-dropdown trigger="click">
@@ -3198,6 +3474,7 @@ onBeforeUnmount(() => {
             <el-table-column label="操作" width="190" fixed="right" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openPurchaseDetail(row)">查看</el-button>
+                <el-button v-if="canDownloadCompleteDocument(row)" link type="info" :loading="documentDownloadKey === `PURCHASE-${row.id}`" @click="downloadCompleteDocument('PURCHASE', row)">PDF</el-button>
                 <el-button link type="primary" :disabled="!canEditPurchase(row)" @click="openPurchaseEdit(row)">编辑</el-button>
                 <el-button link type="success" :loading="isRowActionLoading('submit-purchase', row.id)" :disabled="!canEditPurchase(row) || Boolean(rowActionLoading)" @click="submitPurchase(row)">提交</el-button>
                 <el-dropdown trigger="click">
@@ -3322,6 +3599,7 @@ onBeforeUnmount(() => {
             <el-table-column label="操作" width="200" fixed="right" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openLaborDetail(row)">查看</el-button>
+                <el-button v-if="canDownloadCompleteDocument(row)" link type="info" :loading="documentDownloadKey === `LABOR-${row.id}`" @click="downloadCompleteDocument('LABOR', row)">PDF</el-button>
                 <el-button v-if="canEditLabor(row)" link type="primary" @click="openLaborEdit(row)">编辑</el-button>
                 <el-button v-if="canEditLabor(row)" link type="success" :loading="isRowActionLoading('submit-labor', row.id)" :disabled="Boolean(rowActionLoading)" @click="submitLabor(row)">提交</el-button>
                 <el-button v-if="canApproveLabor(row)" link type="success" @click="openLaborApproval(row, 'APPROVE')">审批</el-button>
@@ -3343,7 +3621,7 @@ onBeforeUnmount(() => {
         <section v-if="activeMenu === 'advances'" class="page-panel">
           <div class="section-header list-page-header">
             <div><h2>暂借款 / 预付款</h2><p>跟踪申请、审批、付款、还款与冲账，逾期项目会自动标红提醒。</p></div>
-            <el-button v-if="currentUser.role !== 'CASHIER'" type="primary" :icon="Plus" @click="openAdvanceCreate">新增资金申请</el-button>
+            <el-button v-if="!['CASHIER', 'COMMITTEE'].includes(currentUser.role)" type="primary" :icon="Plus" @click="openAdvanceCreate">新增资金申请</el-button>
           </div>
           <div class="panel-toolbar compact-toolbar filter-toolbar">
             <el-form :inline="true" :model="advanceSearchForm" class="search-form">
@@ -3368,6 +3646,7 @@ onBeforeUnmount(() => {
             <el-table-column label="操作" width="210" fixed="right" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openAdvanceDetail(row)">查看</el-button>
+                <el-button v-if="canDownloadCompleteDocument(row)" link type="info" :loading="documentDownloadKey === `ADVANCE-${row.id}`" @click="downloadCompleteDocument('ADVANCE', row)">PDF</el-button>
                 <el-button v-if="canEditAdvance(row)" link type="primary" @click="openAdvanceEdit(row)">编辑</el-button>
                 <el-button v-if="canEditAdvance(row)" link type="success" :loading="isRowActionLoading('submit-advance', row.id)" :disabled="Boolean(rowActionLoading)" @click="submitAdvance(row)">提交</el-button>
                 <el-button v-if="canApproveAdvance(row)" link type="success" @click="openAdvanceApproval(row, 'APPROVE')">审批</el-button>
@@ -3664,6 +3943,102 @@ onBeforeUnmount(() => {
       </el-main>
     </el-container>
 
+    <el-drawer
+      v-model="todoDrawerVisible"
+      title="处理待办"
+      size="min(760px, 96vw)"
+      class="todo-action-drawer"
+      destroy-on-close
+    >
+      <div v-loading="todoDetailLoading" class="todo-drawer-body">
+        <template v-if="selectedTodo && todoDetailEntity">
+          <el-descriptions border :column="2">
+            <el-descriptions-item label="业务类型">{{ selectedTodo.type }}</el-descriptions-item>
+            <el-descriptions-item label="单据编号">{{ selectedTodo.number }}</el-descriptions-item>
+            <el-descriptions-item label="申请人">{{ selectedTodo.applicantName || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="部门">{{ selectedTodo.departmentName || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="金额">{{ formatMoney(selectedTodo.amount) }}</el-descriptions-item>
+            <el-descriptions-item label="当前节点">{{ getWorkbenchNodeLabel(selectedTodo.currentNode) }}</el-descriptions-item>
+            <el-descriptions-item label="标题/摘要" :span="2">{{ selectedTodo.title }}</el-descriptions-item>
+            <el-descriptions-item label="等待时间" :span="2">
+              {{ formatWaitingTime(selectedTodo.waitingSince) }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <section class="detail-section">
+            <div class="section-header">
+              <div><h2>附件资料</h2><p>付款前上传银行回执，冲账前上传对应凭证。</p></div>
+              <el-upload
+                v-if="selectedTodo.availableActions.includes('UPLOAD_RECEIPT') || selectedTodo.availableActions.includes('OFFSET')"
+                :show-file-list="false"
+                :http-request="uploadTodoVoucher"
+                accept="image/*,.pdf"
+              >
+                <el-button type="primary" :icon="UploadFilled" :loading="saving">
+                  {{ todoAttachmentType === 'OFFSET_VOUCHER' ? '上传冲账凭证' : '上传银行回执' }}
+                </el-button>
+              </el-upload>
+            </div>
+            <el-alert
+              v-if="selectedTodo.availableActions.includes('PAY') || selectedTodo.availableActions.includes('OFFSET')"
+              :type="todoHasRequiredVoucher ? 'success' : 'warning'"
+              :title="todoHasRequiredVoucher ? '所需凭证已上传' : '执行操作前必须先上传所需凭证'"
+              :closable="false"
+              show-icon
+            />
+            <el-table :data="todoAttachments" border empty-text="暂无附件">
+              <el-table-column prop="attachmentType" label="类型" width="150" />
+              <el-table-column prop="fileName" label="文件名" min-width="220" />
+              <el-table-column label="操作" width="90">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="downloadAttachment(selectedTodo.businessType, row)">下载</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <section class="detail-section">
+            <div class="section-header"><div><h2>审批时间轴</h2><p>展示该单据目前已经完成的流程节点。</p></div></div>
+            <el-empty v-if="!todoTimeline.length" description="暂无审批记录" :image-size="60" />
+            <el-timeline v-else>
+              <el-timeline-item
+                v-for="node in todoTimeline"
+                :key="node.nodeType"
+                :timestamp="formatDateTime(node.time)"
+                :color="getTimelineColor(node.status)"
+                placement="top"
+              >
+                <div class="timeline-card">
+                  <div class="timeline-title-row">
+                    <strong>{{ node.title }}</strong>
+                    <el-tag :type="getTimelineStatusType(node.status)" size="small">{{ getTimelineStatusLabel(node.status) }}</el-tag>
+                  </div>
+                  <div class="timeline-meta">操作人：{{ node.operatorName || '待处理' }}</div>
+                  <p>{{ node.comment || '-' }}</p>
+                </div>
+              </el-timeline-item>
+            </el-timeline>
+          </section>
+        </template>
+      </div>
+      <template #footer>
+        <div class="todo-drawer-actions">
+          <el-button @click="todoDrawerVisible = false">关闭</el-button>
+          <template v-for="action in selectedTodo?.availableActions || []" :key="action">
+            <el-button
+              v-if="!['VIEW', 'UPLOAD_RECEIPT'].includes(action)"
+              :type="action === 'REJECT' ? 'danger' : action === 'APPROVE' || action === 'FINANCE_RECHECK' ? 'success' : 'primary'"
+              :loading="saving"
+              :disabled="saving"
+              @click="handleTodoAction(action)"
+            >
+              {{ todoActionLabels[action] }}
+            </el-button>
+          </template>
+        </div>
+      </template>
+    </el-drawer>
+
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新增报销单' : '编辑报销单'" width="820px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="108px">
         <div class="reimbursement-form-grid">
@@ -3672,7 +4047,7 @@ onBeforeUnmount(() => {
           <el-form-item label="发生日期" prop="expenseDate"><el-date-picker v-model="form.expenseDate" type="date" value-format="YYYY-MM-DD" class="full-width" /></el-form-item>
           <el-form-item label="报销金额" prop="amount"><el-input-number v-model="form.amount" :min="0.01" :precision="2" :step="10" class="full-width" /></el-form-item>
           <el-form-item label="付款总金额"><el-input-number v-model="form.paymentTotal" :min="0" :precision="2" :step="10" class="full-width" /></el-form-item>
-          <el-form-item label="申请人电话"><el-input v-model="form.applicantPhone" maxlength="40" /></el-form-item>
+          <el-form-item label="申请人电话" required><el-input v-model="form.applicantPhone" maxlength="40" /></el-form-item>
           <el-form-item label="预算编号"><el-input v-model="form.budgetNumber" maxlength="60" /></el-form-item>
           <el-form-item label="关联申购单">
             <el-select v-model="form.relatedPurchaseNumber" clearable filterable allow-create class="full-width" placeholder="选择已完成申购单或手动输入">
@@ -3685,10 +4060,10 @@ onBeforeUnmount(() => {
             </el-select>
           </el-form-item>
           <el-form-item label="付款日期"><el-date-picker v-model="form.paymentDate" type="date" value-format="YYYY-MM-DD" class="full-width" /></el-form-item>
-          <el-form-item label="收款人全称"><el-input v-model="form.payeeName" maxlength="120" /></el-form-item>
+          <el-form-item label="收款人全称" required><el-input v-model="form.payeeName" maxlength="120" /></el-form-item>
           <el-form-item label="开户行"><el-input v-model="form.bankName" maxlength="160" /></el-form-item>
-          <el-form-item label="银行账号" class="wide"><el-input v-model="form.bankAccount" maxlength="80" /></el-form-item>
-          <el-form-item label="报销事由" class="wide"><el-input v-model="form.reimbursementReason" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
+          <el-form-item label="银行账号" class="wide" required><el-input v-model="form.bankAccount" maxlength="80" /></el-form-item>
+          <el-form-item label="报销事由" class="wide" required><el-input v-model="form.reimbursementReason" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
           <el-form-item label="补充说明" class="wide"><el-input v-model="form.description" type="textarea" :rows="2" maxlength="500" show-word-limit /></el-form-item>
           <el-form-item v-if="isHighValueForm" label="大额报销说明" prop="highValueExplanation" class="wide" required>
             <el-input v-model="form.highValueExplanation" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="金额超过 5 万元时必填，保存后还需上传会议审议材料方可提交" />
@@ -3698,7 +4073,7 @@ onBeforeUnmount(() => {
           type="info"
           :closable="false"
           show-icon
-          title="可先保存草稿；提交审批前必须进入详情，分别上传至少 1 份发票和 1 份其他凭证。"
+          title="草稿允许暂不完整；提交审批前必须填写带星号字段并上传至少 1 份发票，其他材料按实际业务上传。"
         />
         <el-alert v-if="isHighValueForm" type="error" :closable="false" show-icon title="该报销金额超过 5 万元，提交前必须填写大额报销说明并上传会议审议材料。" />
       </el-form>
@@ -3751,6 +4126,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="purchaseDetailVisible" title="申购详情" width="920px">
       <div v-if="selectedPurchase" class="detail-grid">
+        <div class="detail-download-bar"><el-button v-if="canDownloadCompleteDocument(selectedPurchase)" type="primary" plain :loading="documentDownloadKey === `PURCHASE-${selectedPurchase.id}`" @click="downloadCompleteDocument('PURCHASE', selectedPurchase)">下载完整单据 PDF</el-button></div>
         <el-descriptions border :column="2">
           <el-descriptions-item label="申购编号">{{ selectedPurchase.applicationNumber }}</el-descriptions-item>
           <el-descriptions-item label="状态"><el-tag :type="getPurchaseStatusType(selectedPurchase.status)">{{ getPurchaseStatusLabel(selectedPurchase.status) }}</el-tag></el-descriptions-item>
@@ -3877,6 +4253,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="advanceDetailVisible" title="暂借款 / 预付款详情" width="900px">
       <div v-if="selectedAdvance" class="detail-grid">
+        <div class="detail-download-bar"><el-button v-if="canDownloadCompleteDocument(selectedAdvance)" type="primary" plain :loading="documentDownloadKey === `ADVANCE-${selectedAdvance.id}`" @click="downloadCompleteDocument('ADVANCE', selectedAdvance)">下载完整单据 PDF</el-button></div>
         <el-descriptions border :column="2">
           <el-descriptions-item label="申请编号">{{ selectedAdvance.applicationNumber }}</el-descriptions-item>
           <el-descriptions-item label="类型">{{ advanceTypeLabels[selectedAdvance.type] }}</el-descriptions-item>
@@ -4049,6 +4426,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="laborDetailVisible" title="劳务酬金发放详情" width="980px">
       <div v-if="selectedLabor" class="detail-grid">
+        <div class="detail-download-bar"><el-button v-if="canDownloadCompleteDocument(selectedLabor)" type="primary" plain :loading="documentDownloadKey === `LABOR-${selectedLabor.id}`" @click="downloadCompleteDocument('LABOR', selectedLabor)">下载完整单据 PDF</el-button></div>
         <el-descriptions border :column="2">
           <el-descriptions-item label="劳务编号">{{ selectedLabor.applicationNumber }}</el-descriptions-item>
           <el-descriptions-item label="状态"><el-tag :type="getLaborStatusType(selectedLabor.status)">{{ getLaborStatusLabel(selectedLabor.status) }}</el-tag></el-descriptions-item>
@@ -4222,6 +4600,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="detailDialogVisible" title="报销详情" width="820px">
       <div v-if="detailData" class="detail-grid">
+        <div class="detail-download-bar"><el-button v-if="canDownloadCompleteDocument(detailData.reimbursement)" type="primary" plain :loading="documentDownloadKey === `REIMBURSEMENT-${detailData.reimbursement.id}`" @click="downloadCompleteDocument('REIMBURSEMENT', detailData.reimbursement)">下载完整单据 PDF</el-button></div>
         <el-descriptions border :column="2">
           <el-descriptions-item label="审批编号">{{ detailData.reimbursement.approvalNumber || '-' }}</el-descriptions-item>
           <el-descriptions-item label="标题">{{ detailData.reimbursement.title }}</el-descriptions-item>
@@ -4275,7 +4654,7 @@ onBeforeUnmount(() => {
 
         <section class="detail-section">
           <div class="section-header">
-            <div><h2>凭证附件</h2><p>提交审批前必须上传发票和其他凭证；只有“发票”类型会进入 OCR 识别。</p></div>
+            <div><h2>凭证附件</h2><p>发票必传，合同、会议记录、付款凭证及其他材料按实际业务上传；只有“发票”类型会进入 OCR 识别。</p></div>
             <div v-if="canUploadRow(detailData.reimbursement)" class="attachment-actions">
               <el-select v-model="attachmentType" class="attachment-type-select">
                 <el-option
@@ -4291,7 +4670,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <el-alert
-            title="必传要求：至少 1 份发票，并至少上传 1 份合同、会议记录、付款凭证或其他证明材料。"
+            title="提交必传：至少 1 份发票。其他材料按实际业务情况上传。"
             type="warning"
             :closable="false"
             show-icon
@@ -4300,8 +4679,8 @@ onBeforeUnmount(() => {
             <el-tag :type="hasAttachmentType(detailData.attachments, 'INVOICE') ? 'success' : 'danger'">
               发票必传：{{ hasAttachmentType(detailData.attachments, 'INVOICE') ? '已上传' : '缺失' }}
             </el-tag>
-            <el-tag :type="hasOtherCredential(detailData.attachments) ? 'success' : 'danger'">
-              其他凭证必传：{{ hasOtherCredential(detailData.attachments) ? '已上传' : '缺失' }}
+            <el-tag type="info">
+              其他材料：按实际业务上传
             </el-tag>
           </div>
           <el-table :data="detailData.attachments" border empty-text="暂无附件">

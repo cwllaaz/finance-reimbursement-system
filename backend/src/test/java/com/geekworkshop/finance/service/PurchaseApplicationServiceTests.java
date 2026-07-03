@@ -56,6 +56,20 @@ class PurchaseApplicationServiceTests {
     }
 
     @Test
+    void committeeCanViewPurchasesFromAllDepartments() {
+        Department first = department(1L);
+        Department second = department(2L);
+        when(applicationRepository.findAllDetails()).thenReturn(List.of(
+                application(100L, first, PurchaseStatus.SUBMITTED, "1000"),
+                application(101L, second, PurchaseStatus.COMPLETED, "2000")
+        ));
+
+        var result = service.list(user(70L, UserRole.COMMITTEE, first), null, null);
+
+        assertEquals(2, result.size());
+    }
+
+    @Test
     void officeCanCreatePurchaseApplication() {
         Department department = department(1L);
         AppUser office = user(60L, UserRole.OFFICE, department);

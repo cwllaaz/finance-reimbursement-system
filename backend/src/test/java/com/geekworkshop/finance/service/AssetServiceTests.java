@@ -52,6 +52,83 @@ class AssetServiceTests {
     }
 
     @Test
+    void fullLedgerRolesCanViewAllAssetsButCashierCannotAccessModule() {
+        Asset first = asset(20L, AssetStatus.IN_STOCK);
+        Asset second = asset(21L, AssetStatus.IN_USE);
+        when(assetRepository.findAllDetails()).thenReturn(List.of(first, second));
+
+        for (UserRole role : List.of(
+                UserRole.OFFICE, UserRole.FINANCE, UserRole.EXECUTIVE,
+                UserRole.COMMITTEE, UserRole.ADMIN)) {
+            assertEquals(2, service.list(user((long) role.ordinal() + 10, role), null, null).size());
+        }
+        assertThrows(ForbiddenException.class,
+                () -> service.list(user(99L, UserRole.CASHIER), null, null));
+        verify(assetRepository, times(5)).findAllDetails();
+    }
+
+    @Test
+    void employeeAndManagerOnlySeeAvailableOrPersonallyHeldAssets() {
+        AppUser employee = user(3L, UserRole.EMPLOYEE);
+        Asset available = asset(20L, AssetStatus.IN_STOCK);
+        Asset own = asset(21L, AssetStatus.IN_USE);
+        own.setClaimedBy(employee);
+        own.setCustodian(employee);
+        Asset anotherUsers = asset(22L, AssetStatus.IN_USE);
+        anotherUsers.setClaimedBy(user(4L, UserRole.EMPLOYEE));
+        anotherUsers.setCustodian(anotherUsers.getClaimedBy());
+        when(assetRepository.findAllDetails()).thenReturn(List.of(available, own, anotherUsers));
+
+        assertEquals(2, service.list(employee, null, null).size());
+
+        AppUser manager = user(5L, UserRole.DEPARTMENT_MANAGER);
+        assertEquals(1, service.list(manager, null, null).size());
+    }
+
+    @Test
+    void employeeCannotOpenAnotherUsersAssetDetail() {
+        Asset anotherUsers = asset(22L, AssetStatus.IN_USE);
+        anotherUsers.setCustodian(user(4L, UserRole.EMPLOYEE));
+        when(assetRepository.findDetailById(22L)).thenReturn(Optional.of(anotherUsers));
+
+        assertThrows(ForbiddenException.class,
+                () -> service.detail(user(3L, UserRole.EMPLOYEE), 22L));
+        verify(historyRepository, never()).findByAssetIdOrderByCreatedAtAsc(22L);
+    }
+
+    @Test
+    void personalAssetDetailOnlyContainsRelatedHistory() {
+        AppUser employee = user(3L, UserRole.EMPLOYEE);
+        AppUser office = user(2L, UserRole.OFFICE);
+        Asset own = asset(21L, AssetStatus.IN_USE);
+        own.setClaimedBy(employee);
+        own.setCustodian(employee);
+        AssetHistory inbound = history(own, office, null, AssetHistoryAction.ACCEPTED_INBOUND);
+        AssetHistory claimed = history(own, office, employee, AssetHistoryAction.CLAIMED);
+        when(assetRepository.findDetailById(21L)).thenReturn(Optional.of(own));
+        when(historyRepository.findByAssetIdOrderByCreatedAtAsc(21L)).thenReturn(List.of(inbound, claimed));
+
+        var response = service.detail(employee, 21L);
+
+        assertEquals(1, response.history().size());
+        assertEquals(AssetHistoryAction.CLAIMED, response.history().getFirst().action());
+    }
+
+    @Test
+    void financeExecutiveAndCommitteeCannotAcceptOrAssignAssets() {
+        AssetAcceptanceRequest acceptance = acceptanceRequest();
+        AssetClaimRequest claim = new AssetClaimRequest();
+        claim.setClaimantUserId(3L);
+        claim.setUseLocation("Room 301");
+
+        for (UserRole role : List.of(UserRole.FINANCE, UserRole.EXECUTIVE, UserRole.COMMITTEE)) {
+            AppUser viewer = user((long) role.ordinal() + 20, role);
+            assertThrows(ForbiddenException.class, () -> service.acceptInbound(viewer, acceptance));
+            assertThrows(ForbiddenException.class, () -> service.claim(viewer, 20L, claim));
+        }
+    }
+
+    @Test
     void completedPurchaseCreatesAssetLedger() {
         AppUser office = user(2L, UserRole.OFFICE);
         PurchaseApplication purchase = completedPurchase(10L);
@@ -200,6 +277,19 @@ class AssetServiceTests {
         asset.setLocation("资产库");
         asset.setStatus(status);
         return asset;
+    }
+
+    private AssetHistory history(
+            Asset asset, AppUser operator, AppUser custodian, AssetHistoryAction action
+    ) {
+        AssetHistory history = new AssetHistory();
+        history.setAsset(asset);
+        history.setOperator(operator);
+        history.setCustodian(custodian);
+        history.setAction(action);
+        history.setLocation(asset.getLocation());
+        history.setAssetStatus(asset.getStatus());
+        return history;
     }
 
     private AppUser user(Long id, UserRole role) {

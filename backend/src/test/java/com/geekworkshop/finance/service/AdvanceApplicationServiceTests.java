@@ -60,6 +60,23 @@ class AdvanceApplicationServiceTests {
     }
 
     @Test
+    void committeeCanViewAdvanceApplicationsFromAllDepartments() {
+        AdvanceApplication first = application(AdvanceStatus.SUBMITTED);
+        AdvanceApplication second = application(AdvanceStatus.COMPLETED);
+        ReflectionTestUtils.setField(second, "id", 11L);
+        Department other = new Department();
+        ReflectionTestUtils.setField(other, "id", 99L);
+        other.setName("Other");
+        second.setDepartment(other);
+        when(applicationRepository.findAllDetails()).thenReturn(List.of(first, second));
+
+        assertEquals(2, service.list(
+                user(7L, UserRole.COMMITTEE), null, null, null, null, null).size());
+        assertThrows(ForbiddenException.class,
+                () -> service.create(user(7L, UserRole.COMMITTEE), request(AdvanceType.TEMPORARY_LOAN)));
+    }
+
+    @Test
     void departmentApprovalMustComeBeforeFinance() {
         AdvanceApplication value = application(AdvanceStatus.SUBMITTED);
         when(applicationRepository.findDetailById(10L)).thenReturn(Optional.of(value));

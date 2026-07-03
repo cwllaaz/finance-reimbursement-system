@@ -494,10 +494,11 @@ body {
 
 .metric-card strong {
   min-width: 0;
-  overflow-wrap: anywhere;
   color: #111827;
-  font-size: clamp(18px, 1.55vw, 23px);
+  font-size: clamp(17px, 1.2vw, 22px);
+  font-variant-numeric: tabular-nums;
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .metric-icon {
@@ -670,8 +671,8 @@ body {
 }
 
 .chart-card {
-  min-height: 360px;
-  padding: 20px;
+  min-height: 480px;
+  padding: 24px;
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
@@ -679,15 +680,15 @@ body {
 
 .chart-box {
   width: 100%;
-  height: 290px;
+  height: 390px;
 }
 
 .status-chart-box {
-  height: 330px;
+  height: 410px;
 }
 
 .chart-empty {
-  height: 290px;
+  height: 390px;
 }
 
 .dashboard-alert {
@@ -1500,6 +1501,10 @@ body {
 
   .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
   }
 }
 

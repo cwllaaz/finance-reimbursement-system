@@ -78,7 +78,9 @@ public class AdvanceApplicationService {
     @Transactional
     public AdvanceApplicationResponse create(AppUser user, AdvanceApplicationRequest request) {
         requireModuleAccess(user);
-        if (user.getRole() == UserRole.CASHIER) throw new ForbiddenException("出纳不能创建资金申请");
+        if (EnumSet.of(UserRole.CASHIER, UserRole.COMMITTEE).contains(user.getRole())) {
+            throw new ForbiddenException("当前角色不能创建资金申请");
+        }
         AdvanceApplication value = new AdvanceApplication();
         value.setApplicationNumber(nextNumber());
         value.setApplicant(user);
@@ -394,11 +396,18 @@ public class AdvanceApplicationService {
         if (!canView(user, value)) throw new ForbiddenException("无权查看该申请");
     }
     private boolean canView(AppUser user, AdvanceApplication value) {
-        if (EnumSet.of(UserRole.FINANCE, UserRole.EXECUTIVE, UserRole.ADMIN).contains(user.getRole())) return true;
+        if (EnumSet.of(UserRole.FINANCE, UserRole.EXECUTIVE, UserRole.COMMITTEE, UserRole.ADMIN)
+                .contains(user.getRole())) return true;
         if (user.getRole() == UserRole.DEPARTMENT_MANAGER) return sameDepartment(user, value);
-        if (user.getRole() == UserRole.CASHIER) return EnumSet.of(
-                AdvanceStatus.EXECUTIVE_APPROVED, AdvanceStatus.PAID, AdvanceStatus.COMPLETED).contains(value.getStatus());
+        if (user.getRole() == UserRole.CASHIER) {
+            return value.getStatus() == AdvanceStatus.EXECUTIVE_APPROVED || paidBy(user, value.getId());
+        }
         return user.getId().equals(value.getApplicant().getId());
+    }
+    private boolean paidBy(AppUser user, Long applicationId) {
+        return approvalRepository.findDetailsByApproverId(user.getId()).stream()
+                .anyMatch(record -> record.getAdvanceApplication().getId().equals(applicationId)
+                        && "CASHIER_PAYMENT".equals(record.getApprovalNode()));
     }
     private boolean sameDepartment(AppUser user, AdvanceApplication value) {
         return user.getDepartment() != null && value.getDepartment() != null

@@ -7,6 +7,7 @@ const roles = {
   finance: 'FINANCE',
   office: 'OFFICE',
   executive: 'EXECUTIVE',
+  committee: 'COMMITTEE',
   cashier: 'CASHIER',
   admin: 'ADMIN',
 }
@@ -55,8 +56,16 @@ http.createServer(async (request, response) => {
     return json(response, {
       monthAmount: 32860,
       pendingCount: 4,
-      reimbursementCount: 13,
-      statusCounts: { DRAFT: 3, SUBMITTED: 2, COMPLETED: 7, REJECTED: 1 },
+      reimbursementCount: 16,
+      statusCounts: {
+        DRAFT: 2,
+        FINANCE_INITIAL_APPROVED: 1,
+        EXECUTIVE_APPROVED: 1,
+        PAID: 1,
+        COMPLETED: 1,
+        APPROVED: 9,
+        REJECTED: 1,
+      },
       budgets: [
         { departmentName: '科研管理部', totalAmount: 120000, usedAmount: 42000, remainingAmount: 78000 },
         { departmentName: '办公室', totalAmount: 80000, usedAmount: 26000, remainingAmount: 54000 },

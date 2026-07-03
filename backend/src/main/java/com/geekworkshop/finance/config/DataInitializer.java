@@ -98,6 +98,7 @@ public class DataInitializer implements CommandLineRunner {
         ensureUser("finance", "123456", "Accountant Zhao", UserRole.FINANCE, finance);
         AppUser officeUser = ensureUser("office", "123456", "Office Chen", UserRole.OFFICE, office);
         AppUser executive = ensureUser("executive", "123456", "Executive Dean", UserRole.EXECUTIVE, leadership);
+        ensureUser("committee", "123456", "Committee Member", UserRole.COMMITTEE, leadership);
         ensureUser("cashier", "123456", "Cashier Liu", UserRole.CASHIER, finance);
         ensureUser("admin", "123456", "System Admin", UserRole.ADMIN, finance);
 

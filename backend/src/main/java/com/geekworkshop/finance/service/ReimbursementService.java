@@ -59,6 +59,8 @@ import java.time.Year;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -683,6 +685,14 @@ public class ReimbursementService {
     }
 
     private void validateSubmissionMaterials(Reimbursement reimbursement) {
+        List<String> missingFields = new ArrayList<>();
+        if (!StringUtils.hasText(reimbursement.getApplicantPhone())) missingFields.add("申请人电话");
+        if (!StringUtils.hasText(reimbursement.getBankAccount())) missingFields.add("银行账号");
+        if (!StringUtils.hasText(reimbursement.getPayeeName())) missingFields.add("收款人全称");
+        if (!StringUtils.hasText(reimbursement.getReimbursementReason())) missingFields.add("报销事由");
+        if (!missingFields.isEmpty()) {
+            throw new BusinessException("提交报销单前请填写：" + String.join("、", missingFields));
+        }
         Long reimbursementId = reimbursement.getId();
         if (!attachmentRepository.existsByReimbursementIdAndAttachmentType(
                 reimbursementId,
@@ -690,18 +700,6 @@ public class ReimbursementService {
         )) {
             throw new BusinessException("提交报销单前必须至少上传 1 份发票");
         }
-        if (!attachmentRepository.existsByReimbursementIdAndAttachmentTypeIn(
-                reimbursementId,
-                List.of(
-                        AttachmentType.CONTRACT,
-                        AttachmentType.MEETING_MINUTES,
-                        AttachmentType.BANK_RECEIPT,
-                        AttachmentType.OTHER
-                )
-        )) {
-            throw new BusinessException("提交报销单前必须至少上传 1 份其他凭证（合同、会议记录、付款凭证或其他证明材料）");
-        }
-
         if (reimbursement.getAmount() == null
                 || reimbursement.getAmount().compareTo(HIGH_VALUE_THRESHOLD) <= 0) {
             return;
@@ -733,7 +731,8 @@ public class ReimbursementService {
     private boolean canView(AppUser currentUser, Reimbursement reimbursement) {
         if (currentUser.getRole() == UserRole.ADMIN
                 || currentUser.getRole() == UserRole.FINANCE
-                || currentUser.getRole() == UserRole.EXECUTIVE) {
+                || currentUser.getRole() == UserRole.EXECUTIVE
+                || currentUser.getRole() == UserRole.COMMITTEE) {
             return true;
         }
 
@@ -748,9 +747,7 @@ public class ReimbursementService {
 
         if (currentUser.getRole() == UserRole.CASHIER) {
             return reimbursement.getStatus() == ReimbursementStatus.EXECUTIVE_APPROVED
-                    || reimbursement.getStatus() == ReimbursementStatus.PAID
-                    || reimbursement.getStatus() == ReimbursementStatus.COMPLETED
-                    || reimbursement.getStatus() == ReimbursementStatus.APPROVED;
+                    || paidBy(currentUser, reimbursement.getId());
         }
 
         return false;
@@ -761,6 +758,7 @@ public class ReimbursementService {
                 || currentUser.getRole() == UserRole.DEPARTMENT_MANAGER
                 || currentUser.getRole() == UserRole.FINANCE
                 || currentUser.getRole() == UserRole.EXECUTIVE
+                || currentUser.getRole() == UserRole.COMMITTEE
                 || currentUser.getRole() == UserRole.CASHIER
                 || currentUser.getRole() == UserRole.ADMIN;
     }
@@ -814,6 +812,38 @@ public class ReimbursementService {
         return currentUser.getDepartment() != null
                 && reimbursement.getDepartment() != null
                 && currentUser.getDepartment().getId().equals(reimbursement.getDepartment().getId());
+    }
+
+    public void assertCanDownloadAttachment(
+            AppUser currentUser, Reimbursement reimbursement, AttachmentType attachmentType
+    ) {
+        if (EnumSet.of(UserRole.FINANCE, UserRole.EXECUTIVE, UserRole.COMMITTEE, UserRole.ADMIN)
+                .contains(currentUser.getRole())) {
+            return;
+        }
+        if (currentUser.getRole() == UserRole.DEPARTMENT_MANAGER && sameDepartment(currentUser, reimbursement)) {
+            return;
+        }
+        if (currentUser.getRole() == UserRole.EMPLOYEE
+                && reimbursement.getApplicant() != null
+                && Objects.equals(reimbursement.getApplicant().getId(), currentUser.getId())) {
+            return;
+        }
+        if (currentUser.getRole() == UserRole.CASHIER) {
+            if (reimbursement.getStatus() == ReimbursementStatus.EXECUTIVE_APPROVED) {
+                return;
+            }
+            if (attachmentType == AttachmentType.BANK_RECEIPT && paidBy(currentUser, reimbursement.getId())) {
+                return;
+            }
+        }
+        throw new ForbiddenException("无权下载该报销附件");
+    }
+
+    private boolean paidBy(AppUser currentUser, Long reimbursementId) {
+        return approvalRecordRepository.findDetailsByApproverId(currentUser.getId()).stream()
+                .anyMatch(record -> record.getReimbursement().getId().equals(reimbursementId)
+                        && "CASHIER_PAYMENT".equals(record.getApprovalNode()));
     }
 
     private boolean canViewBudget(AppUser currentUser, Budget budget) {

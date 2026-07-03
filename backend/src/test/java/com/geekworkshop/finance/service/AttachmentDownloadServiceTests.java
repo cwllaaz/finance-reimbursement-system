@@ -60,7 +60,7 @@ class AttachmentDownloadServiceTests {
 
         assertEquals(file, result.path());
         assertEquals("invoice.pdf", result.fileName());
-        verify(reimbursementService).detail(user, 99L);
+        verify(reimbursementService).assertCanDownloadAttachment(user, attachment.getReimbursement(), AttachmentType.INVOICE);
     }
 
     @Test
@@ -68,7 +68,8 @@ class AttachmentDownloadServiceTests {
         Attachment attachment = attachment("/uploads/invoice/stored.pdf");
         when(reimbursementAttachmentRepository.findById(10L)).thenReturn(Optional.of(attachment));
         doThrow(new ForbiddenException("无权查看"))
-                .when(reimbursementService).detail(user, 99L);
+                .when(reimbursementService)
+                .assertCanDownloadAttachment(user, attachment.getReimbursement(), AttachmentType.INVOICE);
 
         assertThrows(ForbiddenException.class,
                 () -> service.load(user, AttachmentModule.REIMBURSEMENT, 10L));

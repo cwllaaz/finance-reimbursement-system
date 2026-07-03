@@ -100,6 +100,83 @@ class WorkbenchServiceTests {
 
         assertEquals(1, result.size());
         assertEquals(100L, result.getFirst().businessId());
+        assertEquals("DEPARTMENT", result.getFirst().currentNode());
+        assertTrue(result.getFirst().availableActions().contains(WorkbenchAction.APPROVE));
+        assertTrue(result.getFirst().availableActions().contains(WorkbenchAction.REJECT));
+        assertTrue(result.getFirst().availableActions().contains(WorkbenchAction.VIEW));
+    }
+
+    @Test
+    void cashierTodoIncludesReceiptUploadAndPaymentActions() {
+        AppUser cashier = user(50L, UserRole.CASHIER, finance);
+        Reimbursement pending = reimbursement(
+                100L, user(10L, UserRole.EMPLOYEE, research), research,
+                ReimbursementStatus.EXECUTIVE_APPROVED);
+        when(reimbursementRepository.findAllForExport()).thenReturn(List.of(pending));
+
+        var result = service.list(cashier, WorkbenchScope.MY_TODOS, null, null, null);
+
+        assertEquals(1, result.size());
+        assertEquals("CASHIER_PAYMENT", result.getFirst().currentNode());
+        assertTrue(result.getFirst().availableActions().contains(WorkbenchAction.UPLOAD_RECEIPT));
+        assertTrue(result.getFirst().availableActions().contains(WorkbenchAction.PAY));
+    }
+
+    @Test
+    void financeRecheckAndAdvanceOffsetExposeCorrectActions() {
+        AppUser financeUser = user(40L, UserRole.FINANCE, finance);
+        Reimbursement paid = reimbursement(
+                100L, user(10L, UserRole.EMPLOYEE, research), research, ReimbursementStatus.PAID);
+        AdvanceApplication offset = advance(
+                300L, user(11L, UserRole.EMPLOYEE, research), research, AdvanceStatus.COMPLETED);
+        offset.setSettlementStatus(SettlementStatus.PARTIAL_OFFSET);
+        when(reimbursementRepository.findAllForExport()).thenReturn(List.of(paid));
+        when(advanceRepository.findAllDetails()).thenReturn(List.of(offset));
+
+        var result = service.list(financeUser, WorkbenchScope.MY_TODOS, null, null, null);
+
+        assertEquals(2, result.size());
+        var recheck = result.stream().filter(item -> "REIMBURSEMENT".equals(item.businessType())).findFirst().orElseThrow();
+        var offsetItem = result.stream().filter(item -> "ADVANCE".equals(item.businessType())).findFirst().orElseThrow();
+        assertEquals("FINANCE_RECHECK", recheck.currentNode());
+        assertTrue(recheck.availableActions().contains(WorkbenchAction.FINANCE_RECHECK));
+        assertEquals("OFFSET", offsetItem.currentNode());
+        assertEquals(List.of(WorkbenchAction.OFFSET, WorkbenchAction.VIEW), offsetItem.availableActions());
+    }
+
+    @Test
+    void handledTaskLeavesTodosAndAppearsInDoneItems() {
+        AppUser manager = user(30L, UserRole.DEPARTMENT_MANAGER, research);
+        Reimbursement item = reimbursement(
+                100L, user(10L, UserRole.EMPLOYEE, research), research,
+                ReimbursementStatus.FINANCE_INITIAL_APPROVED);
+        when(reimbursementRepository.findAllForExport()).thenReturn(List.of(item));
+        assertEquals(1, service.list(manager, WorkbenchScope.MY_TODOS, null, null, null).size());
+
+        item.setStatus(ReimbursementStatus.DEPARTMENT_APPROVED);
+        ApprovalRecord handled = approvalRecord(item, manager, "DEPARTMENT", 2);
+        when(reimbursementApprovalRepository.findDetailsByApproverId(manager.getId()))
+                .thenReturn(List.of(handled));
+
+        assertTrue(service.list(manager, WorkbenchScope.MY_TODOS, null, null, null).isEmpty());
+        var done = service.list(manager, WorkbenchScope.DONE, null, null, null);
+        assertEquals(1, done.size());
+        assertEquals(List.of(WorkbenchAction.VIEW), done.getFirst().availableActions());
+    }
+
+    @Test
+    void readOnlyRolesAndWrongDepartmentReceiveNoTodos() {
+        Reimbursement pending = reimbursement(
+                100L, user(10L, UserRole.EMPLOYEE, research), research,
+                ReimbursementStatus.FINANCE_INITIAL_APPROVED);
+        when(reimbursementRepository.findAllForExport()).thenReturn(List.of(pending));
+
+        assertTrue(service.list(
+                user(60L, UserRole.COMMITTEE, finance),
+                WorkbenchScope.MY_TODOS, null, null, null).isEmpty());
+        assertTrue(service.list(
+                user(61L, UserRole.DEPARTMENT_MANAGER, finance),
+                WorkbenchScope.MY_TODOS, null, null, null).isEmpty());
     }
 
     @Test
@@ -175,6 +252,21 @@ class WorkbenchServiceTests {
         value.setApplicant(applicant);
         value.setDepartment(department);
         value.setAmount(new BigDecimal("500.00"));
+        value.setStatus(status);
+        return value;
+    }
+
+    private AdvanceApplication advance(
+            Long id, AppUser applicant, Department department, AdvanceStatus status
+    ) {
+        AdvanceApplication value = new AdvanceApplication();
+        base(value, id);
+        value.setApplicationNumber("YF2026070100" + id % 10);
+        value.setReason("测试预付款");
+        value.setApplicant(applicant);
+        value.setDepartment(department);
+        value.setAmount(new BigDecimal("800.00"));
+        value.setOffsetAmount(BigDecimal.ZERO);
         value.setStatus(status);
         return value;
     }

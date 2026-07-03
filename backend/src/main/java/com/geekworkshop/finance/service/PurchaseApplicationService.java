@@ -295,7 +295,7 @@ public class PurchaseApplicationService {
 
     private boolean canView(AppUser user, PurchaseApplication application) {
         return switch (user.getRole()) {
-            case ADMIN, FINANCE, EXECUTIVE -> true;
+            case ADMIN, FINANCE, EXECUTIVE, COMMITTEE -> true;
             case DEPARTMENT_MANAGER -> sameDepartment(user, application);
             case EMPLOYEE, OFFICE -> application.getApplicant().getId().equals(user.getId());
             default -> false;

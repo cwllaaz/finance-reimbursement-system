@@ -12,6 +12,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.EnumSet;
 import java.util.List;
 
 @Service
@@ -41,8 +42,10 @@ public class AssetService {
 
     @Transactional(readOnly = true)
     public List<AssetResponse> list(AppUser user, String keyword, AssetStatus status) {
+        requireAssetAccess(user);
         String normalized = StringUtils.hasText(keyword) ? keyword.trim().toLowerCase() : null;
         return assetRepository.findAllDetails().stream()
+                .filter(asset -> canView(user, asset))
                 .filter(asset -> status == null || asset.getStatus() == status)
                 .filter(asset -> normalized == null
                         || asset.getAssetNumber().toLowerCase().contains(normalized)
@@ -56,9 +59,13 @@ public class AssetService {
 
     @Transactional(readOnly = true)
     public AssetResponse detail(AppUser user, Long id) {
+        requireAssetAccess(user);
         Asset asset = requireAsset(id);
+        requireView(user, asset);
         List<AssetHistoryResponse> history = historyRepository.findByAssetIdOrderByCreatedAtAsc(id)
-                .stream().map(AssetHistoryResponse::fromEntity).toList();
+                .stream()
+                .filter(record -> canViewHistory(user, record))
+                .map(AssetHistoryResponse::fromEntity).toList();
         return AssetResponse.fromEntity(asset, history);
     }
 
@@ -186,6 +193,51 @@ public class AssetService {
     private Asset requireAsset(Long id) {
         return assetRepository.findDetailById(id)
                 .orElseThrow(() -> new BusinessException("资产不存在"));
+    }
+
+    private void requireAssetAccess(AppUser user) {
+        if (user.getRole() == UserRole.CASHIER) {
+            throw new ForbiddenException("出纳不能访问资产管理模块");
+        }
+    }
+
+    private void requireView(AppUser user, Asset asset) {
+        if (!canView(user, asset)) {
+            throw new ForbiddenException("无权查看该资产");
+        }
+    }
+
+    private boolean canView(AppUser user, Asset asset) {
+        if (hasFullLedgerAccess(user)) {
+            return true;
+        }
+        if (!EnumSet.of(UserRole.EMPLOYEE, UserRole.DEPARTMENT_MANAGER).contains(user.getRole())) {
+            return false;
+        }
+        return asset.getStatus() == AssetStatus.IN_STOCK
+                || isUser(asset.getCustodian(), user)
+                || isUser(asset.getClaimedBy(), user);
+    }
+
+    private boolean canViewHistory(AppUser user, AssetHistory history) {
+        if (hasFullLedgerAccess(user)) {
+            return true;
+        }
+        return isUser(history.getCustodian(), user) || isUser(history.getOperator(), user);
+    }
+
+    private boolean hasFullLedgerAccess(AppUser user) {
+        return EnumSet.of(
+                UserRole.OFFICE,
+                UserRole.FINANCE,
+                UserRole.EXECUTIVE,
+                UserRole.COMMITTEE,
+                UserRole.ADMIN
+        ).contains(user.getRole());
+    }
+
+    private boolean isUser(AppUser candidate, AppUser user) {
+        return candidate != null && candidate.getId() != null && candidate.getId().equals(user.getId());
     }
 
     private void requireOffice(AppUser user) {

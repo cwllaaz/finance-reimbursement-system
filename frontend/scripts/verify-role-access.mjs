@@ -23,9 +23,13 @@ const expected = {
     defaultMenu: 'dashboard',
     menus: ['dashboard', 'myApplications', 'myTodos', 'doneItems', 'reimbursement', 'purchases', 'assets', 'labor', 'advances', 'approval', 'ledger', 'report', 'profile'],
   },
+  COMMITTEE: {
+    defaultMenu: 'reimbursement',
+    menus: ['myApplications', 'reimbursement', 'purchases', 'assets', 'labor', 'advances', 'profile'],
+  },
   CASHIER: {
     defaultMenu: 'myTodos',
-    menus: ['myApplications', 'myTodos', 'doneItems', 'assets', 'labor', 'advances', 'paymentTasks', 'profile'],
+    menus: ['myApplications', 'myTodos', 'doneItems', 'reimbursement', 'labor', 'advances', 'profile'],
   },
   ADMIN: {
     defaultMenu: 'dashboard',

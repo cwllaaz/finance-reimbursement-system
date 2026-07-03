@@ -2,6 +2,9 @@ package com.geekworkshop.finance.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
+
+import com.geekworkshop.finance.entity.WorkbenchAction;
 
 public record WorkbenchItemResponse(
         String businessType,
@@ -14,6 +17,9 @@ public record WorkbenchItemResponse(
         String departmentName,
         BigDecimal amount,
         String status,
-        LocalDateTime time
+        LocalDateTime time,
+        String currentNode,
+        LocalDateTime waitingSince,
+        List<WorkbenchAction> availableActions
 ) {
 }

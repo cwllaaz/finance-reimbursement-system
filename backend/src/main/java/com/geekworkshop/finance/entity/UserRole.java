@@ -6,6 +6,7 @@ public enum UserRole {
     FINANCE,
     OFFICE,
     EXECUTIVE,
+    COMMITTEE,
     CASHIER,
     ADMIN
 }

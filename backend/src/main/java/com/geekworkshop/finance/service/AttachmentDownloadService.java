@@ -57,7 +57,8 @@ public class AttachmentDownloadService {
             case REIMBURSEMENT -> {
                 Attachment attachment = reimbursementAttachmentRepository.findById(attachmentId)
                         .orElseThrow(() -> new BusinessException("附件不存在"));
-                reimbursementService.detail(user, attachment.getReimbursement().getId());
+                reimbursementService.assertCanDownloadAttachment(
+                        user, attachment.getReimbursement(), attachment.getAttachmentType());
                 yield file(attachment.getFileUrl(), attachment.getFileName(), attachment.getFileType());
             }
             case PURCHASE -> {

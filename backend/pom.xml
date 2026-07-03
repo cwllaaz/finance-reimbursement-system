@@ -55,6 +55,16 @@
 			<artifactId>poi-ooxml</artifactId>
 			<version>5.5.1</version>
 		</dependency>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf</artifactId>
+			<version>2.2.0</version>
+		</dependency>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf-fonts-extra</artifactId>
+			<version>2.2.0</version>
+		</dependency>
 
 		<dependency>
 			<groupId>com.mysql</groupId>
