@@ -7,4 +7,7 @@ export const assetApi = {
   claimantOptions: () => api.get('/assets/claimants'),
   accept: (data) => api.post('/assets/acceptance', data),
   claim: (id, data) => api.post(`/assets/${id}/claim`, data),
+  claimApplications: () => api.get('/assets/claim-applications'),
+  requestClaim: (id, data) => api.post(`/assets/${id}/claim-applications`, data),
+  reviewClaim: (id, data) => api.post(`/assets/claim-applications/${id}/review`, data),
 }

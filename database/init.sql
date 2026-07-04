@@ -429,3 +429,22 @@ CREATE TABLE IF NOT EXISTS income_attachment (
   CONSTRAINT fk_income_attachment_record
     FOREIGN KEY (income_record_id) REFERENCES income_record(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS asset_claim_application (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  asset_id BIGINT NOT NULL,
+  applicant_id BIGINT NOT NULL,
+  department_id BIGINT,
+  use_location VARCHAR(200) NOT NULL,
+  reason VARCHAR(500) NOT NULL,
+  status VARCHAR(30) NOT NULL,
+  reviewed_by BIGINT,
+  review_comment VARCHAR(500),
+  reviewed_at DATETIME,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  CONSTRAINT fk_asset_claim_asset FOREIGN KEY (asset_id) REFERENCES asset(id),
+  CONSTRAINT fk_asset_claim_applicant FOREIGN KEY (applicant_id) REFERENCES `user`(id),
+  CONSTRAINT fk_asset_claim_department FOREIGN KEY (department_id) REFERENCES department(id),
+  CONSTRAINT fk_asset_claim_reviewer FOREIGN KEY (reviewed_by) REFERENCES `user`(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -22,6 +22,7 @@ public class AssetService {
     private final AssetHistoryRepository historyRepository;
     private final PurchaseApplicationRepository purchaseRepository;
     private final AppUserRepository appUserRepository;
+    private final AssetClaimApplicationRepository claimApplicationRepository;
     private final OperationLogService operationLogService;
 
     public AssetService(
@@ -30,6 +31,7 @@ public class AssetService {
             AssetHistoryRepository historyRepository,
             PurchaseApplicationRepository purchaseRepository,
             AppUserRepository appUserRepository,
+            AssetClaimApplicationRepository claimApplicationRepository,
             OperationLogService operationLogService
     ) {
         this.assetRepository = assetRepository;
@@ -37,6 +39,7 @@ public class AssetService {
         this.historyRepository = historyRepository;
         this.purchaseRepository = purchaseRepository;
         this.appUserRepository = appUserRepository;
+        this.claimApplicationRepository = claimApplicationRepository;
         this.operationLogService = operationLogService;
     }
 
@@ -146,11 +149,85 @@ public class AssetService {
     public AssetResponse claim(AppUser user, Long id, AssetClaimRequest request) {
         requireOffice(user);
         Asset asset = requireAsset(id);
+        AppUser claimant = appUserRepository.findWithDepartmentById(request.getClaimantUserId())
+                .orElseThrow(() -> new BusinessException("领用人不存在"));
+        return assignAsset(user, asset, claimant, request.getUseLocation(), request.getRemark());
+    }
+
+    @Transactional
+    public AssetClaimApplicationResponse requestClaim(
+            AppUser user, Long assetId, AssetClaimApplicationRequest request
+    ) {
+        if (!EnumSet.of(UserRole.EMPLOYEE, UserRole.DEPARTMENT_MANAGER).contains(user.getRole())) {
+            throw new ForbiddenException("只有员工和部门负责人可以提交资产领用申请");
+        }
+        Asset asset = requireAsset(assetId);
+        if (asset.getStatus() != AssetStatus.IN_STOCK) {
+            throw new BusinessException("只有库存中的资产可以申请领用");
+        }
+        if (claimApplicationRepository.existsByAssetIdAndStatus(assetId, AssetClaimStatus.PENDING)) {
+            throw new BusinessException("该资产已有待处理的领用申请");
+        }
+        AssetClaimApplication application = new AssetClaimApplication();
+        application.setAsset(asset);
+        application.setApplicant(user);
+        application.setDepartment(user.getDepartment());
+        application.setUseLocation(request.getUseLocation().trim());
+        application.setReason(request.getReason().trim());
+        AssetClaimApplication saved = claimApplicationRepository.save(application);
+        operationLogService.record(user, "资产管理", "申请领用资产", saved.getId(),
+                asset.getAssetNumber(), "使用地点：" + application.getUseLocation());
+        return AssetClaimApplicationResponse.fromEntity(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AssetClaimApplicationResponse> claimApplications(AppUser user) {
+        requireAssetAccess(user);
+        return claimApplicationRepository.findAllDetails().stream()
+                .filter(value -> hasFullLedgerAccess(user)
+                        || isUser(value.getApplicant(), user)
+                        || (user.getRole() == UserRole.DEPARTMENT_MANAGER
+                            && sameDepartment(value.getApplicant(), user)))
+                .map(AssetClaimApplicationResponse::fromEntity)
+                .toList();
+    }
+
+    @Transactional
+    public AssetClaimApplicationResponse reviewClaim(
+            AppUser user, Long requestId, AssetClaimReviewRequest request
+    ) {
+        requireOffice(user);
+        AssetClaimApplication application = claimApplicationRepository.findDetailById(requestId)
+                .orElseThrow(() -> new BusinessException("资产领用申请不存在"));
+        if (application.getStatus() != AssetClaimStatus.PENDING) {
+            throw new BusinessException("该领用申请已经处理");
+        }
+        if (!Boolean.TRUE.equals(request.getApproved()) && !StringUtils.hasText(request.getComment())) {
+            throw new BusinessException("驳回领用申请时必须填写原因");
+        }
+        if (Boolean.TRUE.equals(request.getApproved())) {
+            assignAsset(user, application.getAsset(), application.getApplicant(),
+                    application.getUseLocation(), application.getReason());
+            application.setStatus(AssetClaimStatus.APPROVED);
+        } else {
+            application.setStatus(AssetClaimStatus.REJECTED);
+        }
+        application.setReviewedBy(user);
+        application.setReviewComment(request.getComment());
+        application.setReviewedAt(LocalDateTime.now());
+        claimApplicationRepository.save(application);
+        operationLogService.record(user, "资产管理",
+                Boolean.TRUE.equals(request.getApproved()) ? "通过资产领用申请" : "驳回资产领用申请",
+                application.getId(), application.getAsset().getAssetNumber(), request.getComment());
+        return AssetClaimApplicationResponse.fromEntity(application);
+    }
+
+    private AssetResponse assignAsset(
+            AppUser user, Asset asset, AppUser claimant, String useLocation, String remark
+    ) {
         if (asset.getStatus() != AssetStatus.IN_STOCK) {
             throw new BusinessException("只有库存中的资产可以领用");
         }
-        AppUser claimant = appUserRepository.findWithDepartmentById(request.getClaimantUserId())
-                .orElseThrow(() -> new BusinessException("领用人不存在"));
         if (!Boolean.TRUE.equals(claimant.getEnabled())) {
             throw new BusinessException("不能选择已禁用的用户作为领用人");
         }
@@ -163,15 +240,15 @@ public class AssetService {
         asset.setClaimedBy(claimant);
         asset.setClaimedAt(claimedAt);
         asset.setCustodian(claimant);
-        asset.setLocation(request.getUseLocation().trim());
+        asset.setLocation(useLocation.trim());
         asset.setStatus(AssetStatus.IN_USE);
         assetRepository.save(asset);
         saveHistory(asset, user, claimant, receiptNumber, AssetHistoryAction.CLAIMED,
-                "办公室办理领用，实际使用人：" + claimant.getRealName() + optionalRemark(request.getRemark()));
+                "办公室办理领用，实际使用人：" + claimant.getRealName() + optionalRemark(remark));
         operationLogService.record(user, "资产管理", "领用资产", asset.getId(), asset.getAssetNumber(),
                 "领用单号 " + receiptNumber + "，实际使用人：" + claimant.getRealName()
                         + "，使用地点：" + asset.getLocation());
-        return detail(user, id);
+        return detail(user, asset.getId());
     }
 
     private void saveHistory(
@@ -216,14 +293,19 @@ public class AssetService {
         }
         return asset.getStatus() == AssetStatus.IN_STOCK
                 || isUser(asset.getCustodian(), user)
-                || isUser(asset.getClaimedBy(), user);
+                || isUser(asset.getClaimedBy(), user)
+                || (user.getRole() == UserRole.DEPARTMENT_MANAGER
+                    && (sameDepartment(asset.getCustodian(), user)
+                        || sameDepartment(asset.getClaimedBy(), user)));
     }
 
     private boolean canViewHistory(AppUser user, AssetHistory history) {
         if (hasFullLedgerAccess(user)) {
             return true;
         }
-        return isUser(history.getCustodian(), user) || isUser(history.getOperator(), user);
+        return isUser(history.getCustodian(), user) || isUser(history.getOperator(), user)
+                || (user.getRole() == UserRole.DEPARTMENT_MANAGER
+                    && sameDepartment(history.getCustodian(), user));
     }
 
     private boolean hasFullLedgerAccess(AppUser user) {
@@ -238,6 +320,12 @@ public class AssetService {
 
     private boolean isUser(AppUser candidate, AppUser user) {
         return candidate != null && candidate.getId() != null && candidate.getId().equals(user.getId());
+    }
+
+    private boolean sameDepartment(AppUser candidate, AppUser user) {
+        return candidate != null && candidate.getDepartment() != null
+                && user.getDepartment() != null
+                && candidate.getDepartment().getId().equals(user.getDepartment().getId());
     }
 
     private void requireOffice(AppUser user) {

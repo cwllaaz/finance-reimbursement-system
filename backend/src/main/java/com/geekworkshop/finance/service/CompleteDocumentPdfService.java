@@ -84,7 +84,7 @@ public class CompleteDocumentPdfService {
                 "付款凭证号", value.getPaymentVoucherNumber()
         );
         return new PdfModel("报销单", value.getApprovalNumber(), value.getApplicantId(), value.getDepartmentId(),
-                value.getDepartmentName(), fields, List.of(), approvals, attachments);
+                value.getDepartmentName(), fields, List.of(), List.of(), null, approvals, attachments);
     }
 
     private PdfModel purchase(AppUser user, Long id) {
@@ -107,7 +107,9 @@ public class CompleteDocumentPdfService {
         List<List<String>> attachments = value.attachments().stream()
                 .map(item -> List.of(text(item.fileName()), text(item.attachmentType()))).toList();
         return new PdfModel("申购单", value.applicationNumber(), value.applicantId(), value.departmentId(),
-                value.departmentName(), fields, details, approvals, attachments);
+                value.departmentName(), fields,
+                List.of("物品名称", "规格", "厂商", "单价", "数量", "总价"),
+                details, new float[]{1.4f, 1.2f, 1.2f, 0.9f, 0.6f, 0.9f}, approvals, attachments);
     }
 
     private PdfModel labor(AppUser user, Long id) {
@@ -121,14 +123,18 @@ public class CompleteDocumentPdfService {
                 "付款凭证号", value.paymentVoucherNumber()
         );
         List<List<String>> details = value.recipients().stream().map(item -> List.of(
-                text(item.name()), text(item.phone()), text(item.organization()), text(item.position()),
-                text(item.serviceContent()), money(item.netAmount()), text(item.bankAccount()), text(item.bankName())
+                text(item.name()), text(item.phone()), text(item.idCard()),
+                text(item.organization()), text(item.position()), text(item.serviceContent()),
+                money(item.netAmount()), text(item.bankAccount()), text(item.bankName())
         )).toList();
         List<List<String>> approvals = timelineRows(value.timeline());
         List<List<String>> attachments = value.attachments().stream()
                 .map(item -> List.of(text(item.fileName()), text(item.attachmentType()))).toList();
         return new PdfModel("劳务/酬金发放单", value.applicationNumber(), value.applicantId(), value.departmentId(),
-                value.departmentName(), fields, details, approvals, attachments);
+                value.departmentName(), fields,
+                List.of("姓名", "电话", "身份证号", "单位", "职务", "劳务内容", "实发金额", "银行账号", "开户行"),
+                details, new float[]{0.8f, 1.05f, 1.55f, 1.15f, 0.8f, 1.35f, 0.9f, 1.55f, 1.1f},
+                approvals, attachments);
     }
 
     private PdfModel advance(AppUser user, Long id) {
@@ -152,7 +158,9 @@ public class CompleteDocumentPdfService {
         List<List<String>> attachments = value.attachments().stream()
                 .map(item -> List.of(text(item.fileName()), text(item.attachmentType()))).toList();
         return new PdfModel("暂借款/预付款单", value.applicationNumber(), value.applicantId(), null,
-                value.departmentName(), fields, details, approvals, attachments);
+                value.departmentName(), fields,
+                List.of("时间", "操作人", "冲账金额", "说明"),
+                details, new float[]{1.2f, 0.9f, 0.9f, 2.2f}, approvals, attachments);
     }
 
     private List<List<String>> timelineRows(List<? extends Object> timeline) {
@@ -178,7 +186,9 @@ public class CompleteDocumentPdfService {
 
     private byte[] render(PdfModel model) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            Document document = new Document(PageSize.A4, 42, 42, 58, 48);
+            boolean landscape = "劳务/酬金发放单".equals(model.businessType());
+            Document document = new Document(landscape ? PageSize.A4.rotate() : PageSize.A4,
+                    landscape ? 28 : 42, landscape ? 28 : 42, 58, 48);
             PdfWriter writer = PdfWriter.getInstance(document, output);
             BaseFont base = BaseFont.createFont("STSong-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
             writer.setPageEvent(new FooterEvent(base));
@@ -198,7 +208,9 @@ public class CompleteDocumentPdfService {
             document.add(keyValueTable(model.fields(), normal));
             if (!model.details().isEmpty()) {
                 document.add(section("明细数据", heading));
-                document.add(dataTable(model.details(), normal));
+                Font detailFont = landscape ? new Font(base, 7.5f, Font.NORMAL, Color.DARK_GRAY) : normal;
+                document.add(dataTable(
+                        model.detailHeaders(), model.details(), model.detailColumnWidths(), detailFont));
             }
             document.add(section("审批流程及记录", heading));
             document.add(model.approvals().isEmpty()
@@ -250,6 +262,31 @@ public class CompleteDocumentPdfService {
         return table;
     }
 
+    private PdfPTable dataTable(
+            List<String> headers, List<List<String>> rows, float[] columnWidths, Font font
+    ) {
+        int columns = !headers.isEmpty()
+                ? headers.size()
+                : rows.stream().mapToInt(List::size).max().orElse(1);
+        PdfPTable table = columnWidths != null && columnWidths.length == columns
+                ? new PdfPTable(columnWidths)
+                : new PdfPTable(columns);
+        table.setWidthPercentage(100);
+        table.setSplitLate(false);
+        table.setSplitRows(true);
+        if (!headers.isEmpty()) {
+            Font headerFont = new Font(font.getBaseFont(), font.getSize(), Font.BOLD, new Color(20, 45, 75));
+            for (String header : headers) addCell(table, header, headerFont, true);
+            table.setHeaderRows(1);
+        }
+        for (List<String> row : rows) {
+            for (int i = 0; i < columns; i++) {
+                addCell(table, i < row.size() ? row.get(i) : "", font, false);
+            }
+        }
+        return table;
+    }
+
     private void addCell(PdfPTable table, String value, Font font, boolean label) {
         PdfPCell cell = new PdfPCell(new Phrase(text(value), font));
         cell.setPadding(6);
@@ -269,7 +306,8 @@ public class CompleteDocumentPdfService {
 
     private record PdfModel(
             String businessType, String number, Long applicantId, Long departmentId, String departmentName,
-            Map<String, String> fields, List<List<String>> details,
+            Map<String, String> fields, List<String> detailHeaders, List<List<String>> details,
+            float[] detailColumnWidths,
             List<List<String>> approvals, List<List<String>> attachments
     ) {}
     public record PdfFile(byte[] bytes, String fileName) {}

@@ -1,7 +1,9 @@
 package com.geekworkshop.finance.service;
 
 import com.geekworkshop.finance.dto.AssetAcceptanceRequest;
+import com.geekworkshop.finance.dto.AssetClaimApplicationRequest;
 import com.geekworkshop.finance.dto.AssetClaimRequest;
+import com.geekworkshop.finance.dto.AssetClaimReviewRequest;
 import com.geekworkshop.finance.entity.*;
 import com.geekworkshop.finance.exception.BusinessException;
 import com.geekworkshop.finance.exception.ForbiddenException;
@@ -29,6 +31,7 @@ class AssetServiceTests {
     @Mock AssetHistoryRepository historyRepository;
     @Mock PurchaseApplicationRepository purchaseRepository;
     @Mock AppUserRepository appUserRepository;
+    @Mock AssetClaimApplicationRepository claimApplicationRepository;
     @Mock OperationLogService operationLogService;
 
     private AssetService service;
@@ -36,7 +39,7 @@ class AssetServiceTests {
     @BeforeEach
     void setUp() {
         service = new AssetService(assetRepository, acceptanceRepository, historyRepository,
-                purchaseRepository, appUserRepository, operationLogService);
+                purchaseRepository, appUserRepository, claimApplicationRepository, operationLogService);
         lenient().when(assetRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(acceptanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(purchaseRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -68,7 +71,7 @@ class AssetServiceTests {
     }
 
     @Test
-    void employeeAndManagerOnlySeeAvailableOrPersonallyHeldAssets() {
+    void employeeSeesOwnAndAvailableWhileManagerAlsoSeesDepartmentAssets() {
         AppUser employee = user(3L, UserRole.EMPLOYEE);
         Asset available = asset(20L, AssetStatus.IN_STOCK);
         Asset own = asset(21L, AssetStatus.IN_USE);
@@ -82,7 +85,7 @@ class AssetServiceTests {
         assertEquals(2, service.list(employee, null, null).size());
 
         AppUser manager = user(5L, UserRole.DEPARTMENT_MANAGER);
-        assertEquals(1, service.list(manager, null, null).size());
+        assertEquals(3, service.list(manager, null, null).size());
     }
 
     @Test
@@ -196,6 +199,58 @@ class AssetServiceTests {
 
         assertThrows(ForbiddenException.class,
                 () -> service.claim(user(3L, UserRole.EMPLOYEE), 20L, request));
+    }
+
+    @Test
+    void employeeCanApplyForAvailableAsset() {
+        AppUser employee = user(3L, UserRole.EMPLOYEE);
+        Asset available = asset(20L, AssetStatus.IN_STOCK);
+        when(assetRepository.findDetailById(20L)).thenReturn(Optional.of(available));
+        when(claimApplicationRepository.existsByAssetIdAndStatus(20L, AssetClaimStatus.PENDING))
+                .thenReturn(false);
+        when(claimApplicationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        AssetClaimApplicationRequest request = new AssetClaimApplicationRequest();
+        request.setUseLocation("科研楼 301");
+        request.setReason("项目研究使用");
+
+        var response = service.requestClaim(employee, 20L, request);
+
+        assertEquals(AssetClaimStatus.PENDING, response.status());
+        assertEquals(employee.getId(), response.applicantId());
+        assertEquals(available.getId(), response.assetId());
+        verify(claimApplicationRepository).save(any(AssetClaimApplication.class));
+    }
+
+    @Test
+    void officeApprovalAssignsAssetToApplicantAndCreatesHistory() {
+        AppUser office = user(2L, UserRole.OFFICE);
+        AppUser employee = user(3L, UserRole.EMPLOYEE);
+        Asset available = asset(20L, AssetStatus.IN_STOCK);
+        AssetClaimApplication application = new AssetClaimApplication();
+        ReflectionTestUtils.setField(application, "id", 30L);
+        application.setAsset(available);
+        application.setApplicant(employee);
+        application.setDepartment(employee.getDepartment());
+        application.setUseLocation("科研楼 301");
+        application.setReason("项目研究使用");
+        when(claimApplicationRepository.findDetailById(30L)).thenReturn(Optional.of(application));
+        when(assetRepository.findDetailById(20L)).thenReturn(Optional.of(available));
+        when(historyRepository.findTopByReceiptNumberStartingWithOrderByReceiptNumberDesc(any()))
+                .thenReturn(Optional.empty());
+        when(claimApplicationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        AssetClaimReviewRequest request = new AssetClaimReviewRequest();
+        request.setApproved(true);
+        request.setComment("同意领用");
+
+        var response = service.reviewClaim(office, 30L, request);
+
+        assertEquals(AssetClaimStatus.APPROVED, response.status());
+        assertEquals(AssetStatus.IN_USE, available.getStatus());
+        assertEquals(employee.getId(), available.getCustodian().getId());
+        assertEquals(employee.getId(), available.getClaimedBy().getId());
+        verify(historyRepository).save(argThat(history ->
+                history.getAction() == AssetHistoryAction.CLAIMED
+                        && history.getCustodian().getId().equals(employee.getId())));
     }
 
     @Test

@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -373,6 +374,16 @@ class ReimbursementServiceRolePermissionTests {
         ReimbursementResponse response = service.confirmPayment(cashier, 13L, payment);
         assertEquals(ReimbursementStatus.PAID, response.getStatus());
         assertEquals("PAY-2026-001", response.getPaymentVoucherNumber());
+    }
+
+    @Test
+    void financeCanDownloadCashierBankReceiptDuringRecheck() {
+        Department research = department(1L, "Research");
+        AppUser finance = user(UserRole.FINANCE, department(2L, "Finance"));
+        Reimbursement reimbursement = reimbursement(research, "800.00", ReimbursementStatus.PAID);
+
+        assertDoesNotThrow(() ->
+                service.assertCanDownloadAttachment(finance, reimbursement, AttachmentType.BANK_RECEIPT));
     }
 
     @Test

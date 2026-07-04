@@ -64,4 +64,30 @@ public class AssetController {
     ) {
         return assetService.claim(authService.requireUser(token), id, request);
     }
+
+    @GetMapping("/claim-applications")
+    public List<AssetClaimApplicationResponse> claimApplications(
+            @RequestHeader("X-Auth-Token") String token
+    ) {
+        return assetService.claimApplications(authService.requireUser(token));
+    }
+
+    @PostMapping("/{id}/claim-applications")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AssetClaimApplicationResponse requestClaim(
+            @RequestHeader("X-Auth-Token") String token,
+            @PathVariable Long id,
+            @Valid @RequestBody AssetClaimApplicationRequest request
+    ) {
+        return assetService.requestClaim(authService.requireUser(token), id, request);
+    }
+
+    @PostMapping("/claim-applications/{id}/review")
+    public AssetClaimApplicationResponse reviewClaim(
+            @RequestHeader("X-Auth-Token") String token,
+            @PathVariable Long id,
+            @Valid @RequestBody AssetClaimReviewRequest request
+    ) {
+        return assetService.reviewClaim(authService.requireUser(token), id, request);
+    }
 }

@@ -102,10 +102,12 @@ const purchaseAttachmentType = ref('OTHER')
 const assets = ref([])
 const eligibleAssetPurchases = ref([])
 const assetClaimants = ref([])
+const assetClaimApplications = ref([])
 const assetLoading = ref(false)
 const assetDetailVisible = ref(false)
 const acceptanceDialogVisible = ref(false)
 const claimDialogVisible = ref(false)
+const claimApplicationDialogVisible = ref(false)
 const selectedAsset = ref(null)
 const laborApplications = ref([])
 const laborLoading = ref(false)
@@ -251,6 +253,7 @@ const acceptanceForm = reactive({
   remark: '',
 })
 const claimForm = reactive({ claimantUserId: null, useLocation: '', remark: '' })
+const claimApplicationForm = reactive({ useLocation: '', reason: '' })
 const laborSearchForm = reactive({ keyword: '', status: '' })
 const laborApprovalForm = reactive({ action: 'APPROVE', comment: '' })
 const laborPaymentForm = reactive({ paymentDate: '', paymentAmount: null, voucherNumber: '', comment: '' })
@@ -533,6 +536,7 @@ const canViewPurchases = computed(() => purchaseRoles.includes(currentUser.value
 const canCreatePurchase = computed(() => ['EMPLOYEE', 'OFFICE', 'ADMIN'].includes(currentUser.value?.role))
 const canApprovePurchase = computed(() => ['DEPARTMENT_MANAGER', 'FINANCE', 'EXECUTIVE', 'ADMIN'].includes(currentUser.value?.role))
 const canAcceptAssets = computed(() => ['OFFICE', 'ADMIN'].includes(currentUser.value?.role))
+const canRequestAssets = computed(() => ['EMPLOYEE', 'DEPARTMENT_MANAGER'].includes(currentUser.value?.role))
 const canViewLabor = computed(() => currentUser.value?.role !== 'OFFICE')
 const canViewAdvances = computed(() => currentUser.value?.role !== 'OFFICE')
 const canCreateLabor = computed(() => !['CASHIER', 'OFFICE', 'COMMITTEE'].includes(currentUser.value?.role))
@@ -632,14 +636,46 @@ const budgetUsedPercent = computed(() => {
   return total ? Math.round((used / total) * 100) : 0
 })
 
+const attachmentModuleAliases = {
+  REIMBURSEMENT: 'REIMBURSEMENT',
+  PURCHASE: 'PURCHASE',
+  LABOR: 'LABOR',
+  ADVANCE: 'ADVANCE',
+  INCOME: 'INCOME',
+  报销: 'REIMBURSEMENT',
+  申购: 'PURCHASE',
+  劳务: 'LABOR',
+  借款: 'ADVANCE',
+  收入: 'INCOME',
+}
+const attachmentErrorMessage = async (error) => {
+  const data = error.response?.data
+  if (data instanceof Blob) {
+    try {
+      const payload = JSON.parse(await data.text())
+      return payload.message
+    } catch {
+      return null
+    }
+  }
+  return data?.message
+}
 const downloadAttachment = async (module, row) => {
   try {
-    const response = await api.get(`/attachments/${module}/${row.id}/download`, { responseType: 'blob' })
+    const normalizedModule = attachmentModuleAliases[module]
+    if (!normalizedModule || !row?.id) {
+      ElMessage.error('附件信息不完整，请刷新页面后重试')
+      return
+    }
+    const response = await api.get(`/attachments/${normalizedModule}/${row.id}/download`, { responseType: 'blob' })
     const blobUrl = URL.createObjectURL(response.data)
-    window.open(blobUrl, '_blank', 'noopener,noreferrer')
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = row.fileName || '附件'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
   } catch (error) {
-    ElMessage.error(error.response?.data?.message || '附件下载失败或无权访问')
+    ElMessage.error(await attachmentErrorMessage(error) || '附件下载失败，请稍后重试')
   }
 }
 const getStatusLabel = (status) => statusMap.value[status]?.label || status
@@ -1212,7 +1248,7 @@ const refreshAll = async () => {
   if (canViewIncome.value) tasks.push(loadIncomes())
   if (canViewLedger.value) tasks.push(loadLedger())
   if (canManageIncome.value || canViewLedger.value) tasks.push(loadDepartments())
-  if (canAccessMenu(currentUser.value?.role, 'assets')) tasks.push(loadAssets())
+  if (canAccessMenu(currentUser.value?.role, 'assets')) tasks.push(loadAssets(), loadAssetClaimApplications())
   if (canAcceptAssets.value) tasks.push(loadEligibleAssetPurchases(), loadAssetClaimants())
   if (canViewAdvances.value) tasks.push(loadAdvances())
   await Promise.all(tasks)
@@ -1580,6 +1616,17 @@ const loadAssets = async () => {
     ElMessage.error(listErrors.assets)
   } finally {
     assetLoading.value = false
+  }
+}
+const loadAssetClaimApplications = async () => {
+  if (!token.value || !canAccessMenu(currentUser.value?.role, 'assets')) {
+    assetClaimApplications.value = []
+    return
+  }
+  try {
+    assetClaimApplications.value = (await assetApi.claimApplications()).data
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '读取资产领用申请失败')
   }
 }
 const loadEligibleAssetPurchases = async () => {
@@ -2500,6 +2547,57 @@ const submitAssetClaim = async () => {
     saving.value = false
   }
 }
+const openClaimApplicationDialog = row => {
+  selectedAsset.value = row
+  claimApplicationForm.useLocation = ''
+  claimApplicationForm.reason = ''
+  claimApplicationDialogVisible.value = true
+}
+const submitAssetClaimApplication = async () => {
+  if (saving.value) return
+  if (!claimApplicationForm.useLocation.trim() || !claimApplicationForm.reason.trim()) {
+    ElMessage.warning('请填写使用地点和领用理由')
+    return
+  }
+  saving.value = true
+  try {
+    await assetApi.requestClaim(selectedAsset.value.id, claimApplicationForm)
+    ElMessage.success('领用申请已提交，请等待办公室审批')
+    claimApplicationDialogVisible.value = false
+    await loadAssetClaimApplications()
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '提交领用申请失败')
+  } finally {
+    saving.value = false
+  }
+}
+const reviewAssetClaimApplication = async (row, approved) => {
+  let comment = ''
+  if (!approved) {
+    try {
+      const result = await ElMessageBox.prompt('请输入驳回原因', '驳回领用申请', {
+        confirmButtonText: '确认驳回',
+        cancelButtonText: '取消',
+        inputValidator: value => Boolean(value?.trim()) || '必须填写驳回原因',
+      })
+      comment = result.value
+    } catch {
+      return
+    }
+  } else {
+    await ElMessageBox.confirm(`确认将 ${row.assetNumber} 领用给 ${row.applicantName}？`, '通过领用申请')
+  }
+  saving.value = true
+  try {
+    await assetApi.reviewClaim(row.id, { approved, comment })
+    ElMessage.success(approved ? '领用申请已通过并完成资产领用' : '领用申请已驳回')
+    await Promise.all([loadAssets(), loadAssetClaimApplications()])
+  } catch (error) {
+    ElMessage.error(error.response?.data?.message || '处理领用申请失败')
+  } finally {
+    saving.value = false
+  }
+}
 const getAssetStatusLabel = status => assetStatusMap[status]?.label || status
 const getAssetStatusType = status => assetStatusMap[status]?.type || 'info'
 const getLaborStatusLabel = status => laborStatusMap[status]?.label || status
@@ -2982,7 +3080,9 @@ const loadMenuData = async (menu) => {
   if (menu === 'users') await Promise.all([loadUsers(), loadDepartments()])
   if (menu === 'operationLogs') await loadOperationLogs()
   if (menu === 'purchases') await Promise.all([loadPurchases(), loadPendingPurchases()])
-  if (menu === 'assets') await Promise.all([loadAssets(), loadEligibleAssetPurchases(), loadAssetClaimants()])
+  if (menu === 'assets') await Promise.all([
+    loadAssets(), loadAssetClaimApplications(), loadEligibleAssetPurchases(), loadAssetClaimants(),
+  ])
   if (menu === 'labor') await loadLaborApplications()
   if (menu === 'advances') await loadAdvances()
   if (menu === 'incomes') await Promise.all([loadIncomes(), loadDepartments()])
@@ -3555,6 +3655,38 @@ onBeforeUnmount(() => {
             </div>
             <el-button v-if="canAcceptAssets" type="primary" :icon="Plus" @click="openAcceptanceDialog">办理验收入库</el-button>
           </div>
+          <section v-if="assetClaimApplications.length || canAcceptAssets || canRequestAssets" class="embedded-section">
+            <div class="section-header">
+              <div>
+                <h3>资产领用申请</h3>
+                <p>员工提交申请，办公室审批通过后自动生成领用记录。</p>
+              </div>
+            </div>
+            <el-table :data="assetClaimApplications" border stripe empty-text="暂无领用申请">
+              <el-table-column prop="assetNumber" label="资产编号" width="155" />
+              <el-table-column prop="itemName" label="物品" min-width="130" />
+              <el-table-column prop="applicantName" label="申请人" width="110" />
+              <el-table-column prop="departmentName" label="部门" width="130" />
+              <el-table-column prop="useLocation" label="使用地点" min-width="150" />
+              <el-table-column prop="reason" label="领用理由" min-width="180" show-overflow-tooltip />
+              <el-table-column label="状态" width="95">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'APPROVED' ? 'success' : row.status === 'REJECTED' ? 'danger' : 'warning'">
+                    {{ row.status === 'APPROVED' ? '已通过' : row.status === 'REJECTED' ? '已驳回' : '待审批' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="canAcceptAssets" label="操作" width="130" fixed="right">
+                <template #default="{ row }">
+                  <template v-if="row.status === 'PENDING'">
+                    <el-button link type="success" @click="reviewAssetClaimApplication(row, true)">通过</el-button>
+                    <el-button link type="danger" @click="reviewAssetClaimApplication(row, false)">驳回</el-button>
+                  </template>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
           <div class="panel-toolbar compact-toolbar filter-toolbar">
             <el-form :inline="true" :model="assetSearchForm" class="search-form">
               <el-form-item label="关键词">
@@ -3582,10 +3714,11 @@ onBeforeUnmount(() => {
             <el-table-column prop="custodianName" label="当前保管人" width="120"><template #default="{ row }">{{ row.custodianName || '办公室库存' }}</template></el-table-column>
             <el-table-column prop="location" label="当前位置" min-width="140" show-overflow-tooltip />
             <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="getAssetStatusType(row.status)">{{ getAssetStatusLabel(row.status) }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="160" fixed="right" align="right">
+            <el-table-column label="操作" width="220" fixed="right" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openAssetDetail(row)">查看</el-button>
                 <el-button v-if="canAcceptAssets" link type="success" :disabled="row.status !== 'IN_STOCK'" @click="openClaimDialog(row)">办理领用</el-button>
+                <el-button v-if="canRequestAssets && row.status === 'IN_STOCK'" link type="success" @click="openClaimApplicationDialog(row)">申请领用</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -4586,6 +4719,22 @@ onBeforeUnmount(() => {
         <el-form-item label="领用说明"><el-input v-model="claimForm.remark" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
       </el-form>
       <template #footer><el-button @click="claimDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitAssetClaim">确认领用</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="claimApplicationDialogVisible" title="申请领用资产" width="520px">
+      <el-alert type="info" :closable="false" show-icon title="提交后由办公室审批，审批通过后资产才会转为使用中。" />
+      <el-form label-width="90px" class="asset-action-form">
+        <el-form-item label="资产编号"><el-input :model-value="selectedAsset?.assetNumber" disabled /></el-form-item>
+        <el-form-item label="物品名称"><el-input :model-value="selectedAsset?.itemName" disabled /></el-form-item>
+        <el-form-item label="使用地点" required><el-input v-model="claimApplicationForm.useLocation" maxlength="200" /></el-form-item>
+        <el-form-item label="领用理由" required>
+          <el-input v-model="claimApplicationForm.reason" type="textarea" :rows="3" maxlength="500" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="claimApplicationDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitAssetClaimApplication">提交申请</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="assetDetailVisible" title="资产台账详情" width="820px">
